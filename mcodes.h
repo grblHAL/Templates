@@ -2,7 +2,7 @@
 
   mcode.h - user defined M-codes template
 
-  Part of GrblHAL
+  Part of grblHAL
 
   Copyright (c) 2019 Terje Io
 

@@ -2,7 +2,7 @@
 
   ioports.h - user defined IO ports template code
 
-  Part of GrblHAL
+  Part of grblHAL
 
   Copyright (c) 2019 Terje Io
 

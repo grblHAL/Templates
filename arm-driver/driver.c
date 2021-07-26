@@ -3,7 +3,7 @@
 
   Template driver code for ARM processors
 
-  Part of GrblHAL
+  Part of grblHAL
 
   By Terje Io, public domain
 
@@ -12,7 +12,7 @@
 #include "eeprom.h"
 #include "serial.h"
 
-#include "grbl/grbl.h"
+#include "grbl/hal.h"
 
 static bool pwmEnabled = false, IOInitDone = false;
 static axes_signals_t next_step_outbits;
@@ -40,7 +40,7 @@ static void systick_isr (void);
 
 // Millisecond resolution delay function
 // Will return immediately if a callback function is provided
-static void driver_delay_ms (uint32_t ms, void (*callback)(void))
+static void driver_delay_ms (uint32_t ms, delay_callback_ptr callback)
 {
     if(ms) {
         delay.ms = ms;
@@ -181,11 +181,11 @@ inline static limit_signals_t limitsGetState()
 {
     limit_signals_t signals = {0};
 
-	signals.min.value = settings.limits.invert.value
+    signals.min.mask = settings.limits.invert.mask;
 
     // Read limits pins, either to a temp variable or directly to signals.vaue if no remapping is required.
     // Single bits may be also assigned directly by reading them via the bit band region.
-    // signals.value = GPIO_READ(LIMITS_PORT);
+    // signals.min.value = GPIO_READ(LIMITS_PORT);
 
     if (settings.limits.invert.mask)
         signals.min.value ^= settings.limits.invert.mask;
@@ -271,7 +271,7 @@ static void spindleSetState (spindle_state_t state, float rpm)
 static void spindle_set_speed (uint_fast16_t pwm_value)
 {
     if (pwm_value == spindle_pwm.off_value) {
-        if(settings.spindle.disable_with_zero_speed)
+        if(settings.spindle.flags.pwm_action == SpindleAction_DisableWithZeroSPeed)
             spindle_off();
         pwmEnabled = false;
         if(spindle_pwm.always_on) {
@@ -496,7 +496,7 @@ static bool driver_setup (settings_t *settings)
 
   // Set defaults
 
-    IOInitDone = settings->version == 17;
+    IOInitDone = settings->version == 19;
 
     settings_changed(settings);
 
@@ -508,7 +508,7 @@ static bool driver_setup (settings_t *settings)
 }
 
 // Initialize HAL pointers, setup serial comms and enable EEPROM.
-// NOTE: Grbl is not yet configured (from EEPROM data), driver_setup() will be called when done.
+// NOTE: the core is not yet configured (from EEPROM data), driver_setup() will be called when done.
 bool driver_init (void)
 {
     // If CMSIS is used this may be a good place to initialize the system. Comment out or remove if not available or done already.
@@ -528,9 +528,6 @@ bool driver_init (void)
     // Enable EEPROM peripheral here if available.
 
     // Enable lazy stacking of FPU registers here if a FPU is available.
-
-    // Enable serial communication.
-    serialInit();
 
     hal.info = "my driver name"; // Typically set to MCU or board name
 	hal.driver_version = "YYMMDD"; // Set to build date
@@ -569,13 +566,10 @@ bool driver_init (void)
 
     hal.control.get_state = systemGetState;
 
-    hal.stream.read = serialGetC;
-    hal.stream.write = serialWriteS;
-    hal.stream.write_all = serialWriteS;
-    hal.stream.get_rx_buffer_available = serialRxFree;
-    hal.stream.reset_read_buffer = serialRxFlush;
-    hal.stream.cancel_read_buffer = serialRxCancel;
-    hal.stream.suspend_read = serialSuspendInput;
+    // Enable serial communication.
+    const io_stream_t *serial_stream = serialInit(115200);
+
+    memcpy(&hal.stream, serial_stream, offsetof(io_stream_t, enqueue_realtime_command));
 
     // If EEPROM is available for settings storage uncomment the following line:
 
@@ -592,10 +586,13 @@ bool driver_init (void)
     hal.clear_bits_atomic = bitsClearAtomic;
     hal.set_value_atomic = valueSetAtomic;
 
-  // Driver capabilities, used for announcing and negotiating (with Grbl) driver functionality.
-  // See driver_cap_t union i grbl/hal.h for available flags.
+  // Driver capabilities, used for announcing and negotiating (with the core) driver functionality.
+  // See control_signals_t and driver_cap_t union i grbl/hal.h for available flags.
 
-    hal.driver_cap.safety_door = On;
+#if SAFETY_DOOR_ENABLE
+    hal.signals_cap.safety_door_ajar = On;
+#endif
+
     hal.driver_cap.spindle_dir = On;
     hal.driver_cap.variable_spindle = On;
     hal.driver_cap.mist_control = On;
@@ -606,10 +603,11 @@ bool driver_init (void)
     hal.driver_cap.limits_pull_up = On;
     hal.driver_cap.probe_pull_up = On;
 
+    my_plugin_init(); // Init any user supplied plugin (it defaults to a weak implementation).
 
     // No need to move version check before init.
     // Compiler will fail any signature mismatch for existing entries.
-    return hal.version == 7;
+    return hal.version == 8;
 }
 
 /* interrupt handlers */
@@ -665,7 +663,7 @@ static void control_isr (void)
 // Interrupt handler for 1 ms interval timer
 static void systick_isr (void)
 {
-    if(!(--delay.ms)) {
+    if(delay.ms && !(--delay.ms)) {
         // SYSTICK_DISABLE; // Disable systick timer
         if(delay.callback) {
             delay.callback();

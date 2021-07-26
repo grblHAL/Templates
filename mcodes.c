@@ -48,32 +48,32 @@ static user_mcode_t check (user_mcode_t mcode)
 
 // validate - validate parameters
 // parameters: gc_block - pointer to parser_block_t struct (defined in grbl/gcode.h).
-//             parameter_words - pointer to bitfield of parameter words available.
+//             gc_block->words - holds a bitfield of parameter words available.
 //             If float values are NAN (Not A Number) this means they are not available.
 //             If integer values has all bits set to 1 this means they are not available.
 // returns:    status_code_t enum (defined in grbl/gcode.h): Status_OK if validated ok, appropriate status from enum if not.
-static status_code_t validate (parser_block_t *gc_block, parameter_words_t *parameter_words)
+static status_code_t validate (parser_block_t *gc_block, parameter_words_t *deprecated)
 {
     status_code_t state = Status_GcodeValueWordMissing;
 
     switch(gc_block->user_mcode) {
 
         case UserMCode_Generic0:
-            if((*parameter_words).p && !isnan(gc_block->values.p))  // Check if P parameter value is supplied.
-                state = Status_BadNumberFormat;                     // Return error if so.
+            if(gc_block->words.p && !isnan(gc_block->values.p))             // Check if P parameter value is supplied.
+                state = Status_BadNumberFormat;                             // Return error if so.
 
-            if((*parameter_words).q && isnan(gc_block->values.q))   // Check if Q parameter value is supplied.
-                state = Status_BadNumberFormat;                     // Return error if not.
+            if(gc_block->words.q && isnan(gc_block->values.q))              // Check if Q parameter value is supplied.
+                state = Status_BadNumberFormat;                             // Return error if not.
 
-            if(state != Status_BadNumberFormat && (*parameter_words).q) {       // Are required parameters provided?
-                if(gc_block->values.q > 0.0f && gc_block->values.q <= 5.0f)     // Yes, is Q parameter value in range (1-5)?
-                    state = Status_OK;                                          // Yes - return ok status.
+            if(state != Status_BadNumberFormat && gc_block->words.q) {      // Are required parameters provided?
+                if(gc_block->values.q > 0.0f && gc_block->values.q <= 5.0f) // Yes, is Q parameter value in range (1-5)?
+                    state = Status_OK;                                      // Yes - return ok status.
                 else
-                    state = Status_GcodeValueOutOfRange;                        // No - return error status.
-                if((*parameter_words).q)                                        // If P parameter is present set
-                    gc_block->values.p = 1.0f;                                  // value to 1 for execution.
-                (*parameter_words).p = (*parameter_words).q = Off;              // Claim parameters.
-                gc_block->user_mcode_sync = true;                               // Optional: execute command synchronized
+                    state = Status_GcodeValueOutOfRange;                    // No - return error status.
+                if(gc_block->words.q)                                       // If P parameter is present set
+                    gc_block->values.p = 1.0f;                              // value to 1 for execution.
+                gc_block->words.p = gc_block->words.q = Off;                // Claim parameters.
+                gc_block->user_mcode_sync = true;                           // Optional: execute command synchronized
             }
             break;
 
