@@ -83,7 +83,7 @@ static status_code_t validate (parser_block_t *gc_block, parameter_words_t *depr
     }
 
     // If not handled by us and another handler present then call it.
-    return state == Status_Unhandled && user_mcode.validate ? user_mcode.validate(gc_block, parameter_words) : state;
+    return state == Status_Unhandled && user_mcode.validate ? user_mcode.validate(gc_block, deprecated) : state;
 }
 
 // execute - execute M-code
