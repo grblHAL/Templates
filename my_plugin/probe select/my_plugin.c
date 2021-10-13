@@ -24,6 +24,7 @@
 #endif
 
 static uint8_t relay_port;
+static driver_reset_ptr driver_reset;
 static user_mcode_ptrs_t user_mcode;
 static on_report_options_ptr on_report_options;
 
@@ -82,12 +83,19 @@ static void probe_fixture (bool on)
     hal.port.digital_out(relay_port, on);
 }
 
+static void probe_reset (void)
+{
+    driver_reset();
+
+    hal.port.digital_out(relay_port, false);
+}
+
 static void report_options (bool newopt)
 {
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Probe select v0.01]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:Probe select v0.02]" ASCII_EOL);
 }
 
 static void warning_msg (uint_fast16_t state)
@@ -108,6 +116,9 @@ void my_plugin_init (void)
         hal.user_mcode.check = mcode_check;
         hal.user_mcode.validate = mcode_validate;
         hal.user_mcode.execute = mcode_execute;
+
+        driver_reset = hal.driver_reset;
+        hal.driver_reset = probe_reset;
 
         on_report_options = grbl.on_report_options;
         grbl.on_report_options = report_options;
