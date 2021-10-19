@@ -25,13 +25,8 @@
 
 */
 
-#ifdef ARDUINO
-#include "../grbl/hal.h"
-#include "../grbl/protocol.h"
-#else
 #include "grbl/hal.h"
 #include "grbl/protocol.h"
-#endif
 
 #include <math.h>
 #include <string.h>
@@ -97,12 +92,15 @@ static void mcode_execute (uint_fast16_t state, parser_block_t *gc_block)
         case 401:
             if(gc_block->words.q)
                 probe_mode = (probe_mode_t)gc_block->values.q;
-            else
+            else {
                 hal.port.digital_out(relay_port, 1);
+                hal.delay_ms(50, NULL); // Delay a bit to let any contact bounce settle.
+            }
             break;
 
         case 402:
             hal.port.digital_out(relay_port, 0);
+            hal.delay_ms(50, NULL); // Delay a bit to let any contact bounce settle.
             break;
 
         default:
@@ -141,6 +139,7 @@ bool probe_fixture (tool_data_t *tool, bool at_g59_3, bool on)
     }
 
     hal.port.digital_out(relay_port, on);
+    hal.delay_ms(50, NULL); // Delay a bit to let any contact bounce settle.
 
     return on;
 }
