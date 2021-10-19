@@ -26,8 +26,8 @@
 */
 
 #ifdef ARDUINO
-#include "../grbl/hal.h"
-#include "../grbl/protocol.h"
+#include "../src/grbl/hal.h"
+#include "../src/grbl/protocol.h"
 #else
 #include "grbl/hal.h"
 #include "grbl/protocol.h"
