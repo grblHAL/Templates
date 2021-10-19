@@ -44,18 +44,7 @@ static void output_warning (uint_fast16_t state)
     report_message("An output port is required for my_plugin!", Message_Warning);
 }
 
-// Tell the user about which port is used for the output
-static void output_port (uint_fast16_t state)
-{
-    char msg[30];
-
-    strcpy(msg, "My plugin port: ");
-    strcat(msg, uitoa(port));
-
-    report_message(msg, Message_Info);
-}
-
-void my_plugin_init()
+void my_plugin_init (void)
 {
     if(hal.port.num_digital_out == 0)                   // This plugin requires one digital output port,
         protocol_enqueue_rt_command(output_warning);    // complain if not available.
@@ -64,12 +53,13 @@ void my_plugin_init()
         port = hal.port.num_digital_out - 1;            // Claim the
         hal.port.num_digital_out--;                     // last free port.
 
+        if(hal.port.set_pin_description)                // Add label to the pin for the $pins command
+            hal.port.set_pin_description(Port_Digital, Port_Output, port, "Feed hold out");
+
         on_state_change = grbl.on_state_change;         // Subscribe to the state changed event by saving away the original
         grbl.on_state_change = onStateChanged;          // function pointer and adding ours to the chain.
 
         on_report_options = grbl.on_report_options;     // Add our plugin to to the options report chain
         grbl.on_report_options = onReportOptions;       // to tell the user we are active.
-
-        protocol_enqueue_rt_command(output_port);       // Tell the user about which port is used for the output after startup is complete.
     }
 }

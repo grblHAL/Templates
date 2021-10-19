@@ -59,10 +59,10 @@ static status_code_t validate (parser_block_t *gc_block, parameter_words_t *depr
     switch(gc_block->user_mcode) {
 
         case UserMCode_Generic0:
-            if(gc_block->words.p && !isnan(gc_block->values.p))             // Check if P parameter value is supplied.
+            if(gc_block->words.p && !isnanf(gc_block->values.p))             // Check if P parameter value is supplied.
                 state = Status_BadNumberFormat;                             // Return error if so.
 
-            if(gc_block->words.q && isnan(gc_block->values.q))              // Check if Q parameter value is supplied.
+            if(gc_block->words.q && isnanf(gc_block->values.q))              // Check if Q parameter value is supplied.
                 state = Status_BadNumberFormat;                             // Return error if not.
 
             if(state != Status_BadNumberFormat && gc_block->words.q) {      // Are required parameters provided?

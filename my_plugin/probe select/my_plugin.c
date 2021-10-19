@@ -11,11 +11,11 @@
   Public domain.
 
   M401   - switch on relay immediately.
-  M401Q0 - set mode to switch on relay when probing @ G59.3 (default).
-  M401Q1 - set mode to switch on relay when probing @ G59.3 while changing tool (executing M6 when $341 tool change mode is 1, 2 or 3).
-  M401Q2 - set mode to switch on relay when probing while changing tool (executing M6).
-  M401Q3 - set mode to always switch on relay when probing.
-  M401Q4 - set mode to never switch on relay when probing.
+  M401Q0 - set mode to switch on relay when probing @ G59.3 (default)
+  M401Q1 - set mode to switch on relay when probing @ G59.3 while changing tool (executing M6 when $341 tool change mode is 1, 2 or 3)
+  M401Q2 - set mode to switch on relay when probing while changing tool (executing M6)
+  M401Q3 - set mode to always switch on relay when probing
+  M401Q4 - set mode to never switch on relay when probing
   M402   - switch off relay immediately.
 
   NOTES: The symbol TOOLSETTER_RADIUS (defined in grbl/config.h, default 5.0mm) is the tolerance for checking "@ G59.3".
@@ -26,14 +26,15 @@
 */
 
 #ifdef ARDUINO
-#include "../src/grbl/hal.h"
-#include "../src/grbl/protocol.h"
+#include "../grbl/hal.h"
+#include "../grbl/protocol.h"
 #else
 #include "grbl/hal.h"
 #include "grbl/protocol.h"
 #endif
 
 #include <math.h>
+#include <string.h>
 
 typedef enum {
     ProbeMode_AtG59_3 = 0,
@@ -65,7 +66,7 @@ static status_code_t mcode_validate (parser_block_t *gc_block, parameter_words_t
 
         case 401:
             if(gc_block->words.q) {
-                if(isnan(gc_block->values.q))
+                if(isnanf(gc_block->values.q))
                     state = Status_BadNumberFormat;
                 else {
                     if(!isintf(gc_block->values.q) || gc_block->values.q < 0.0f || (probe_mode_t)gc_block->values.q > ProbeMode_MaxValue)
@@ -173,6 +174,8 @@ void my_plugin_init (void)
 
         if(hal.port.set_pin_description)
             hal.port.set_pin_description(Port_Digital, Port_Output, relay_port, "Probe relay");
+
+        memcpy(&user_mcode, &hal.user_mcode, sizeof(user_mcode_ptrs_t));
 
         hal.user_mcode.check = mcode_check;
         hal.user_mcode.validate = mcode_validate;

@@ -26,17 +26,10 @@
  *       See the mcode.c template or standard plugins for how to do this.
  */
 
-#ifdef ARDUINO
-#include "../grbl/hal.h"
-#include "../grbl/report.h"
-#include "../grbl/report.h"
-#include "../grbl/nvs_buffer.h"
-#else
 #include "grbl/hal.h"
 #include "grbl/report.h"
 #include "grbl/nvs_buffer.h"
 #include "grbl/nuts_bolts.h"
-#endif
 
 typedef struct {
     float fvalue;
