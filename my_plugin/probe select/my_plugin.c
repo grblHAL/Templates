@@ -11,15 +11,17 @@
   Public domain.
 
   M401   - switch on relay immediately.
-  M401Q0 - set mode to switch on relay when probing @ G59.3 (default)
-  M401Q1 - set mode to switch on relay when probing @ G59.3 while changing tool (executing M6 when $341 tool change mode is 1, 2 or 3)
-  M401Q2 - set mode to switch on relay when probing while changing tool (executing M6)
-  M401Q3 - set mode to always switch on relay when probing
-  M401Q4 - set mode to never switch on relay when probing
+  M401Q0 - set mode to switch on relay when probing @ G59.3 (default).
+  M401Q1 - set mode to switch on relay when probing @ G59.3 while changing tool (executing M6 when $341 tool change mode is 1, 2 or 3).
+  M401Q2 - set mode to switch on relay when probing while changing tool (executing M6).
+  M401Q3 - set mode to always switch on relay when probing.
+  M401Q4 - set mode to never switch on relay when probing.
+  M401Q5 - set mode to leave relay in current state when probing.
   M402   - switch off relay immediately.
 
   NOTES: The symbol TOOLSETTER_RADIUS (defined in grbl/config.h, default 5.0mm) is the tolerance for checking "@ G59.3".
          When $341 tool change mode 1 or 2 is active it is possible to jog to/from the G59.3 position.
+         Automatic relay switching when probing at the G59.3 position requires the machine to be homed (X and Y).
 
   Tip: Set default mode at startup by adding M401Qx to a startup script ($N0 or $N1)
 
@@ -31,17 +33,21 @@
 #include <math.h>
 #include <string.h>
 
+#define RELAY_DEBOUNCE 50 // ms - increase if relay is slow and/or bouncy
+
 typedef enum {
     ProbeMode_AtG59_3 = 0,
     ProbeMode_ToolChangeAtG59_3,
     ProbeMode_ToolChange,
     ProbeMode_Always,
     ProbeMode_Never,
-    ProbeMode_MaxValue = ProbeMode_Never,
+    ProbeMode_Manual,
+    ProbeMode_MaxValue = ProbeMode_Manual,
 } probe_mode_t;
 
 static uint8_t relay_port;
-static probe_mode_t probe_mode = ProbeMode_AtG59_3;
+static bool relay_on = false;
+static probe_mode_t probe_mode = ProbeMode_AtG59_3; // Default mode
 static driver_reset_ptr driver_reset;
 static user_mcode_ptrs_t user_mcode;
 static on_report_options_ptr on_report_options;
@@ -93,14 +99,16 @@ static void mcode_execute (uint_fast16_t state, parser_block_t *gc_block)
             if(gc_block->words.q)
                 probe_mode = (probe_mode_t)gc_block->values.q;
             else {
+                relay_on = true;
                 hal.port.digital_out(relay_port, 1);
-                hal.delay_ms(50, NULL); // Delay a bit to let any contact bounce settle.
+                hal.delay_ms(RELAY_DEBOUNCE, NULL); // Delay a bit to let any contact bounce settle.
             }
             break;
 
         case 402:
+            relay_on = false;
             hal.port.digital_out(relay_port, 0);
-            hal.delay_ms(50, NULL); // Delay a bit to let any contact bounce settle.
+            hal.delay_ms(RELAY_DEBOUNCE, NULL); // Delay a bit to let any contact bounce settle.
             break;
 
         default:
@@ -119,35 +127,42 @@ bool probe_fixture (tool_data_t *tool, bool at_g59_3, bool on)
     if(on) switch(probe_mode) {
 
         case ProbeMode_AtG59_3:
-            on = at_g59_3;
+            relay_on = at_g59_3;
             break;
 
         case ProbeMode_ToolChangeAtG59_3:
-            on = tool != NULL && at_g59_3;
+            relay_on = tool != NULL && at_g59_3;
             break;
 
         case ProbeMode_ToolChange:
-            on = tool != NULL;
+            relay_on = tool != NULL;
             break;
 
         case ProbeMode_Never:
-            on = false;
+            relay_on = false;
+            break;
+
+        case ProbeMode_Always:
+            relay_on = true;
             break;
 
         default:
             break;
-    }
 
-    hal.port.digital_out(relay_port, on);
-    hal.delay_ms(50, NULL); // Delay a bit to let any contact bounce settle.
+    } else if(probe_mode != ProbeMode_Manual)
+        relay_on = false;
 
-    return on;
+    hal.port.digital_out(relay_port, relay_on);
+    hal.delay_ms(RELAY_DEBOUNCE, NULL); // Delay a bit to let any contact bounce settle.
+
+    return relay_on;
 }
 
 static void probe_reset (void)
 {
     driver_reset();
 
+    relay_on = false;
     hal.port.digital_out(relay_port, false);
 }
 
@@ -156,7 +171,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Probe select v0.03]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:Probe select v0.04]" ASCII_EOL);
 }
 
 static void warning_msg (uint_fast16_t state)
