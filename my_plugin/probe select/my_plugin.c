@@ -1,8 +1,10 @@
 /*
 
   my_plugin.c - plugin template for using an auxillary output to control a probe selection relay.
-  
-  Use the $pins command to find out which output pin is used, it will be labeled "Probe relay".
+
+  Use the $pins command to find out which output port/pin is used, it will be labeled "Probe relay".
+  If driver supports aux port remapping a setting for selecting which port to use will be
+  available, see below.
 
   NOTE: If no auxillary output is available it will not install itself.
 
@@ -51,6 +53,31 @@ static probe_mode_t probe_mode = ProbeMode_AtG59_3; // Default mode
 static driver_reset_ptr driver_reset;
 static user_mcode_ptrs_t user_mcode;
 static on_report_options_ptr on_report_options;
+
+// Later versions of grblHAL and the driver may allow configuring which aux port to use for relay control.
+// If possible the plugin adds a $setting and delay claiming the port until settings has been loaded.
+// The default setting number is Setting_UserDefined_0 ($450), this can be changed by
+// modifying the RELAY_PLUGIN_SETTING symbol below.
+
+#if defined(GRBL_BUILD) && GRBL_BUILD >= 20211117
+
+#include "grbl/nvs_buffer.h"
+
+#define RELAY_PLUGIN_ADVANCED
+#define RELAY_PLUGIN_SETTING Setting_UserDefined_0
+
+static uint8_t n_ports;
+static char max_port[24];
+
+typedef struct {
+    uint8_t port;
+} relay_settings_t;
+
+static nvs_address_t nvs_address;
+static on_report_options_ptr on_report_options;
+static relay_settings_t relay_settings;
+
+#endif
 
 static user_mcode_t mcode_check (user_mcode_t mcode)
 {
@@ -179,6 +206,151 @@ static void warning_msg (uint_fast16_t state)
     report_message("Probe select plugin failed to initialize!", Message_Warning);
 }
 
+#ifdef RELAY_PLUGIN_ADVANCED
+
+// Add info about our settings for $help and enumerations.
+// Potentially used by senders for settings UI.
+
+static const setting_group_detail_t user_groups [] = {
+    { Group_Root, Group_UserSettings, "Probe relay"}
+};
+
+static const setting_detail_t user_settings[] = {
+    { RELAY_PLUGIN_SETTING, Group_UserSettings, "Relay aux port", NULL, Format_Int8, "#0", "0", max_port, Setting_NonCore, &relay_settings.port, NULL, NULL },
+};
+
+#ifndef NO_SETTINGS_DESCRIPTIONS
+
+static const setting_descr_t relay_settings_descr[] = {
+    { RELAY_PLUGIN_SETTING, "Aux port number to use for probe relay control.\\n\\n"
+                            "NOTE: A hard reset of the controller is required after changing this setting."
+    },
+};
+
+#endif
+
+// Write settings to non volatile storage (NVS).
+static void plugin_settings_save (void)
+{
+    hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&relay_settings, sizeof(relay_settings_t), true);
+}
+
+// Restore default settings and write to non volatile storage (NVS).
+// Default is highest numbered free port.
+static void plugin_settings_restore (void)
+{
+    relay_settings.port = hal.port.num_digital_out ? hal.port.num_digital_out - 1 : 0;
+
+    hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&relay_settings, sizeof(relay_settings_t), true);
+}
+
+static void warning_no_port (uint_fast16_t state)
+{
+    report_message("Relay plugin: configured port number is not available", Message_Warning);
+}
+
+// Load our settings from non volatile storage (NVS).
+// If load fails restore to default values.
+static void plugin_settings_load (void)
+{
+    if(hal.nvs.memcpy_from_nvs((uint8_t *)&relay_settings, nvs_address, sizeof(relay_settings_t), true) != NVS_TransferResult_OK)
+        plugin_settings_restore();
+
+    // Sanity check
+    if(relay_settings.port >= n_ports)
+        relay_settings.port = n_ports - 1;
+
+    relay_port = relay_settings.port;
+
+    if(ioport_claim(Port_Digital, Port_Output, &relay_port, "Probe relay")) {
+
+        memcpy(&user_mcode, &hal.user_mcode, sizeof(user_mcode_ptrs_t));
+
+        hal.user_mcode.check = mcode_check;
+        hal.user_mcode.validate = mcode_validate;
+        hal.user_mcode.execute = mcode_execute;
+
+        driver_reset = hal.driver_reset;
+        hal.driver_reset = probe_reset;
+
+        grbl.on_probe_fixture = probe_fixture;
+
+    } else
+        protocol_enqueue_rt_command(warning_no_port);
+}
+
+// Settings descriptor used by the core when interacting with this plugin.
+static setting_details_t details = {
+    .groups = user_groups,
+    .n_groups = sizeof(user_groups) / sizeof(setting_group_detail_t),
+    .settings = user_settings,
+    .n_settings = sizeof(user_settings) / sizeof(setting_detail_t),
+#ifndef NO_SETTINGS_DESCRIPTIONS
+    .descriptions = relay_settings_descr,
+    .n_descriptions = sizeof(relay_settings_descr) / sizeof(setting_descr_t),
+#endif
+    .save = plugin_settings_save,
+    .load = plugin_settings_load,
+    .restore = plugin_settings_restore
+};
+
+// Returns the settings descriptor
+static setting_details_t *get_settings (void)
+{
+    return &details;
+}
+
+void my_plugin_init (void)
+{
+    bool ok = false;
+
+    if(!ioport_can_claim_explicit()) {
+
+        // Driver does not support explicit pin claiming, claim the highest numbered port instead.
+
+        if((ok = hal.port.num_digital_out > 0)) {
+
+            relay_port = --hal.port.num_digital_out;        // "Claim" the port, M62-M65 cannot be used
+    //        relay_port = hal.port.num_digital_out - 1;    // Do not "claim" the port, M62-M65 can be used
+
+            if(hal.port.set_pin_description)
+                hal.port.set_pin_description(Port_Digital, Port_Output, relay_port, "Probe relay");
+
+            memcpy(&user_mcode, &hal.user_mcode, sizeof(user_mcode_ptrs_t));
+
+            hal.user_mcode.check = mcode_check;
+            hal.user_mcode.validate = mcode_validate;
+            hal.user_mcode.execute = mcode_execute;
+
+            driver_reset = hal.driver_reset;
+            hal.driver_reset = probe_reset;
+
+            on_report_options = grbl.on_report_options;
+            grbl.on_report_options = report_options;
+
+            grbl.on_probe_fixture = probe_fixture;
+
+        }
+
+    } else if((ok = (n_ports = ioports_available(Port_Digital, Port_Output)) > 0 && (nvs_address = nvs_alloc(sizeof(relay_settings_t))))) {
+
+        on_report_options = grbl.on_report_options;
+        grbl.on_report_options = report_options;
+
+        details.on_get_settings = grbl.on_get_settings;
+        grbl.on_get_settings = get_settings;
+
+        // Used for setting value validation
+        strcpy(max_port, uitoa(n_ports - 1));
+
+    }
+
+    if(!ok)
+        protocol_enqueue_rt_command(warning_msg);
+}
+
+#else
+
 void my_plugin_init (void)
 {
     if(hal.port.num_digital_out > 0) {
@@ -206,3 +378,5 @@ void my_plugin_init (void)
     } else
         protocol_enqueue_rt_command(warning_msg);
 }
+
+#endif
