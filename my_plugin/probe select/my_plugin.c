@@ -67,7 +67,7 @@ static on_report_options_ptr on_report_options;
 #define RELAY_PLUGIN_SETTING Setting_UserDefined_0
 
 static uint8_t n_ports;
-static char max_port[24];
+static char max_port[4];
 
 typedef struct {
     uint8_t port;
@@ -280,7 +280,7 @@ static void plugin_settings_load (void)
 }
 
 // Settings descriptor used by the core when interacting with this plugin.
-static setting_details_t details = {
+static setting_details_t setting_details = {
     .groups = user_groups,
     .n_groups = sizeof(user_groups) / sizeof(setting_group_detail_t),
     .settings = user_settings,
@@ -293,12 +293,6 @@ static setting_details_t details = {
     .load = plugin_settings_load,
     .restore = plugin_settings_restore
 };
-
-// Returns the settings descriptor
-static setting_details_t *get_settings (void)
-{
-    return &details;
-}
 
 void my_plugin_init (void)
 {
@@ -337,12 +331,10 @@ void my_plugin_init (void)
         on_report_options = grbl.on_report_options;
         grbl.on_report_options = report_options;
 
-        details.on_get_settings = grbl.on_get_settings;
-        grbl.on_get_settings = get_settings;
+        settings_register(&setting_details);
 
         // Used for setting value validation
         strcpy(max_port, uitoa(n_ports - 1));
-
     }
 
     if(!ok)

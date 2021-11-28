@@ -92,7 +92,7 @@ static void plugin_settings_load (void)
 }
 
 // Settings descriptor used by the core when interacting with this plugin.
-static setting_details_t details = {
+static setting_details_t setting_details = {
     .groups = user_groups,
     .n_groups = sizeof(user_groups) / sizeof(setting_group_detail_t),
     .settings = user_settings,
@@ -103,19 +103,13 @@ static setting_details_t details = {
 //    .on_get_settings = grbl.on_get_settings - this function pointer is set on initialization below.
 };
 
-// Returns the settings descriptor
-static setting_details_t *on_get_settings (void)
-{
-    return &details;
-}
-
 // Add info about our plugin to the $I report.
 static void on_report_my_options (bool newopt)
 {
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:My plugin v1.02]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:My plugin v1.03]" ASCII_EOL);
 }
 
 // A call my_plugin_init will be issued automatically at startup.
@@ -131,9 +125,7 @@ void my_plugin_init (void)
         grbl.on_report_options = on_report_my_options;
 
         // Add our settings to the chain of existing descriptors.
-        // A pointer to our settings descriptor is returned via a call to on_get_settings() above.
-        details.on_get_settings = grbl.on_get_settings;
-        grbl.on_get_settings = on_get_settings;
+        settings_register(&setting_details);
 
         // "Hook" into other HAL pointers here to provide functionality.
     }
