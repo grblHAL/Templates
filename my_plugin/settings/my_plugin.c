@@ -4,26 +4,13 @@
 
   Part of grblHAL
 
-  Copyright (c) 2020-2021 Terje Io
-
-  Grbl is free software: you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation, either version 3 of the License, or
-  (at your option) any later version.
-
-  Grbl is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with Grbl.  If not, see <http://www.gnu.org/licenses/>.
+  Public domain.
 
 */
 
 /*
  * NOTE: this plugin does not add any other fuctionality than settings handling, attach to other HAL entry points to provide that.
- *       See the mcode.c template or standard plugins for how to do this.
+ *       See the mcode.c template or standard/template plugins for how to do this.
  */
 
 #include "grbl/hal.h"
@@ -100,7 +87,6 @@ static setting_details_t setting_details = {
     .save = plugin_settings_save,
     .load = plugin_settings_load,
     .restore = plugin_settings_restore
-//    .on_get_settings = grbl.on_get_settings - this function pointer is set on initialization below.
 };
 
 // Add info about our plugin to the $I report.
@@ -109,7 +95,7 @@ static void on_report_my_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:My plugin v1.03]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:Settings template plugin v1.03]" ASCII_EOL);
 }
 
 // A call my_plugin_init will be issued automatically at startup.
@@ -117,14 +103,13 @@ static void on_report_my_options (bool newopt)
 void my_plugin_init (void)
 {
     // Try to allocate space for our settings in non volatile storage (NVS).
-    // If successful make a copy of current settings handlers and add ours.
     if((nvs_address = nvs_alloc(sizeof(plugin_settings_t)))) {
 
         // Add info about our plugin to the $I report.
         on_report_options = grbl.on_report_options;
         grbl.on_report_options = on_report_my_options;
 
-        // Add our settings to the chain of existing descriptors.
+        // Register our settings with the core.
         settings_register(&setting_details);
 
         // "Hook" into other HAL pointers here to provide functionality.
