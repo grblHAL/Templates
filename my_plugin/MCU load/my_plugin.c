@@ -12,6 +12,8 @@
 
 */
 
+#include <string.h>
+
 #include "grbl/hal.h"
 
 static uint32_t count = 0;

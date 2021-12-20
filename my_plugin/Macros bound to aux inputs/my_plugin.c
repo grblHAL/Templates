@@ -9,7 +9,7 @@
   Up to 4 macros can be bound to input pins by changing the N_MACROS symbol below.
   Each macro can be up to 127 characters long, blocks (lines) are separated by a vertical bar character: |
   Setting numbers $450 - $453 are for defining the macro content.
-  Setting numbers $454 - $457 are for configuring which aux input port to assing to each macro.
+  Setting numbers $454 - $457 are for configuring which aux input port to assign to each macro.
   NOTES: If the driver does not support mapping of port numbers settings $454 - $457 will not be available.
          The mapped pins has to be interrupt capable and support falling interrupt mode.
          The controller must be in Idle mode when starting macros.
@@ -51,7 +51,7 @@ typedef struct {
     macro_setting_t macro[N_MACROS];
 } macro_settings_t;
 
-static bool map_ports = false, is_executing = false;
+static bool can_map_ports = false, is_executing = false;
 static uint8_t n_ports;
 uint8_t port[N_MACROS];
 static char max_port[4], *command;
@@ -160,21 +160,21 @@ static bool is_setting_available (const setting_detail_t *setting)
     switch(setting->id) {
 
         case Setting_UserDefined_4:
-            available = map_ports;
+            available = can_map_ports;
             break;
 #if N_MACROS > 1
         case Setting_UserDefined_5:
-            available = map_ports;
+            available = can_map_ports;
             break;
 #endif
 #if N_MACROS > 2
         case Setting_UserDefined_6:
-            available = map_ports;
+            available = can_map_ports;
             break;
 #endif
 #if N_MACROS > 3
         case Setting_UserDefined_7:
-            available = map_ports;
+            available = can_map_ports;
             break;
 #endif
         default:
@@ -243,15 +243,14 @@ static void macro_settings_save (void)
 // Restore default settings and write to non volatile storage (NVS).
 static void macro_settings_restore (void)
 {
-    uint_fast8_t idx = N_MACROS;
+    uint_fast8_t idx = N_MACROS, port = n_ports > N_MACROS ? n_ports - N_MACROS : 0;
 
     // Register empty macro strings and set default port numbers if mapping is available.
-    do {
-        idx--;
-        if(map_ports)
-            plugin_settings.macro[idx].port = hal.port.num_digital_out ? hal.port.num_digital_out - 1 : 0;
+    for(idx = 0; idx < N_MACROS; idx++) {
+        if(can_map_ports)
+            plugin_settings.macro[idx].port = port++;
         *plugin_settings.macro[idx].data = '\0';
-    } while(idx);
+    };
 
     hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&plugin_settings, sizeof(macro_settings_t), true);
 }
@@ -271,14 +270,17 @@ static void macro_settings_load (void)
         macro_settings_restore();
 
     // If port mapping is available try to claim ports as configured.
-    if(map_ports) {
+    if(can_map_ports) {
+
+        xbar_t *pin_info = NULL;
 
         do {
             idx--;
             port[idx] = plugin_settings.macro[idx].port;
-            // Is port interrupt capable?
-            if(hal.port.get_pin_info && !(hal.port.get_pin_info(Port_Digital, Port_Input, port[idx])->cap.irq_mode & IRQ_Mode_Falling))
-                port[idx] = 0xFF; // No, flag it as not claimed.
+            if(hal.port.get_pin_info)
+                pin_info = hal.port.get_pin_info(Port_Digital, Port_Input, port[idx]);
+            if(pin_info && !(pin_info->cap.irq_mode & IRQ_Mode_Falling))                // Is port interrupt capable?
+                port[idx] = 0xFF;                                                       // No, flag it as not claimed.
             else if(!ioport_claim(Port_Digital, Port_Input, &port[idx], "Macro pin"))   // Try to claim the port.
                 port[idx] = 0xFF;                                                       // If not successful flag it as not claimed.
 
@@ -318,7 +320,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Macro plugin v0.01]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:Macro plugin v0.02]" ASCII_EOL);
 }
 
 static void warning_msg (uint_fast16_t state)
@@ -332,7 +334,7 @@ void my_plugin_init (void)
 {
     bool ok = (n_ports = ioports_available(Port_Digital, Port_Input)) > N_MACROS;
 
-    if(ok && !(map_ports = ioport_can_claim_explicit())) {
+    if(ok && !(can_map_ports = ioport_can_claim_explicit())) {
 
         // Driver does not support explicit pin claiming, claim the highest numbered ports instead.
 
