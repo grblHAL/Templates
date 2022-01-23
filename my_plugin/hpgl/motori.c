@@ -25,12 +25,8 @@
 ///
 /// \section The Code
 ///  - motori.h, motori.c   this is the main module with I/O, main loop, interrupts etc
-///  - line.h               has the Bresenham's
 ///  - arc.h                converts an arc description into a series of chords
 ///  - hpgl.h               scans the input and parses commands
-///  - usrat.h              serial i/o
-///  - shvars.h             global variables shared among modules
-///  - configs.h            global defines
 ///
 /// See the Files section for the complete reference.
 ///
@@ -43,17 +39,13 @@
 /// Yours truly,\n
 ///    Viacheslav Slavinsky
 
-// 2022-01-15 : Modified by Terje Io to make it a grblHAL plugin. Added EA command and refactored code.
-
-#include <inttypes.h>
+// 2022-01-21 : Modified by Terje Io to make it a grblHAL plugin. Added many commands and refactored code.
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
 #include <math.h>
 #include <string.h>
 
-#include "shvars.h"
 #include "arc.h"
 #include "htext.h"
 #include "scale.h"
@@ -65,22 +57,46 @@
 #include "../grbl/motion_control.h"
 #include "../grbl/state_machine.h"
 
-
 static volatile bool xoff = false;
+static uint32_t last_action = 0;
 static volatile pen_status_t pen_status = Pen_Unknown;          ///< pen status: 0 = up
 static io_stream_t stream;
 static enqueue_realtime_command_ptr enqueue_realtime_command;
 static on_execute_realtime_ptr on_execute_realtime, process;
 static on_report_options_ptr on_report_options;
+static on_state_change_ptr on_state_change;
 static coord_data_t target = {0}, origin = {0};
 
 
 #define SEEK0_NULL  0
 #define SEEK0_SEEK  1
 #define SEEK0_DONE  0x80
-volatile uint8_t seeking0;              ///< state of seeking home position
 
 float feed_rate = 1000; // mm/min
+
+bool moveto (hpgl_coord_t x, hpgl_coord_t y);
+
+__attribute__((weak)) void select_pen (uint_fast16_t pen)
+{
+    if(pen == 0) {
+        hpgl_state.user_loc.x = hpgl_state.user_loc.y = 0.0f;
+        moveto(0, 0);
+    }
+}
+
+__attribute__((weak)) void pen_led (bool on)
+{
+}
+
+__attribute__((weak)) bool is_plotter_online (void)
+{
+    return true;
+}
+
+coord_data_t *get_origin (void)
+{
+    return &origin;
+}
 
 void grinding_halt() {  
     printf_P(PSTR("\n\007HALT\n"));
@@ -89,14 +105,9 @@ void grinding_halt() {
 
 void plotter_init()
 {
-    stepper_loc.x = stepper_loc.y = 0;
-    user_loc.x = user_loc.y = 0.0f;
-
+    hpgl_init();
     text_init();
-    translate_init();
     pen_control(Pen_Up);
-    
-    seeking0 = SEEK0_NULL;
 }
 
 // cm/sek -> mm/min
@@ -116,48 +127,75 @@ void pen_control (pen_status_t state)
     static const spindle_state_t on = { .on = true },  off = { .on = false };
 
     if (pen_status != state) {
-        protocol_buffer_synchronize();
-        sync_position();
+
+        if (state != Pen_Timeout) {
+            protocol_buffer_synchronize();
+            sync_position();
+        }
+
         if (state == Pen_Down) {
             DELAY_MS(PEN_DOWN_DELAY);
             hal.spindle.set_state(on, 1000.0f);
             pen_status = Pen_Down;
+            last_action = hal.get_elapsed_ticks();
         } else {
             hal.spindle.set_state(off, 0.0f);
             pen_status = Pen_Up;
         }
 
-        DELAY_MS(PEN_LIFT_DELAY);
+        pen_led(pen_status == Pen_Down);
+
+        if (state != Pen_Timeout)
+            DELAY_MS(PEN_LIFT_DELAY);
     }
 }
 
 static inline bool valid_target (hpgl_point_t target)
 {
-    return !(target.x < 0 || target.y < 0);
+    return !(target.x < 0 || target.y < 0 || target.x > MAX_X || target.y > MAX_Y);
 }
 
 bool moveto (hpgl_coord_t x, hpgl_coord_t y)
 {
     plan_line_data_t plan_data = {0};
 
-    if(x < 0 || y < 0)
+    if(x < hpgl_state.ip_pad[0] || y < hpgl_state.ip_pad[1])
         return false;
 
-//    if(x > 8000 || y > 8000)
-//        return false;
+    if(x > hpgl_state.ip_pad[2] || y > hpgl_state.ip_pad[3])
+       return false;
 
     plan_data.feed_rate = feed_rate;
     plan_data.condition.rapid_motion = get_pen_status() == Pen_Up;
 
     target.x = origin.x + (float)x * 0.025f;
     target.y = origin.y + (float)y * 0.025f;
-/*
+
+#ifdef HPGL_DEBUG
     hal.stream.write(uitoa(x));
     hal.stream.write(",");
     hal.stream.write(uitoa(y));
     hal.stream.write(ASCII_EOL);
-*/
+#endif
+
+    last_action = hal.get_elapsed_ticks();
+
     return mc_line(target.values, &plan_data);
+}
+
+void state_changed (sys_state_t state)
+{   
+    static sys_state_t prev_state = STATE_IDLE;
+
+    if(state == STATE_IDLE && prev_state == STATE_JOG) {
+        coord_data_t position;
+        system_convert_array_steps_to_mpos(position.values, sys.position);
+        hpgl_state.user_loc.x = (position.x - origin.x) / 0.025f;
+        hpgl_state.user_loc.y = (position.y - origin.y) / 0.025f;
+    }
+
+    if(state == STATE_IDLE || state == STATE_JOG)
+        prev_state = state;
 }
 
 void poll_stuff (sys_state_t state)
@@ -168,6 +206,10 @@ void poll_stuff (sys_state_t state)
         process(state);
         return;
     }
+
+    // If no motion for 55s lift pen
+    if(get_pen_status() == Pen_Down && (hal.get_elapsed_ticks() - last_action) >= 55000)
+        pen_control(Pen_Timeout);
 }
 
 /// Main loop routine.
@@ -182,8 +224,7 @@ void do_stuff (void)
 {
     hpgl_point_t target;
     uint8_t labelchar;
-    uint8_t finish_path = 0;
-    static uint8_t initializing = 0;
+    pen_status_t on_finish_path = Pen_NoAction;
     hpgl_command_t cmd = 0;
 
     target.x = target.y = -1;
@@ -199,6 +240,8 @@ void do_stuff (void)
             protocol_buffer_synchronize();
             sync_position();
 
+            pen_control(Pen_Up);
+
             memcpy(&hal.stream, &stream, sizeof(io_stream_t));
             hal.stream.set_enqueue_rt_handler(enqueue_realtime_command);
 
@@ -212,45 +255,16 @@ void do_stuff (void)
             return;
         }
 
+        if(!is_plotter_online())
+            return;
+
 //        if(c >= ' ')
 //            hal.stream.write_char(c);
 
         switch((cmd = hpgl_char(c, &target, &labelchar))) {
 
-            case CMD_PU:
-                if (pen_status != 0) {
-                    finish_path = 1;
-                }
-                break;
-
-            case CMD_PD:
-                if (pen_status != 1) {
-                    finish_path = 2;
-                }
-                break;
-
-            case CMD_PA:
-                break;
-
-            case CMD_EA:
-                {
-                    static hpgl_point_t origin;
-                    if(valid_target(target)) {
-                        finish_path = get_pen_status();
-                        pen_control(Pen_Down);
-                        moveto(target.x, origin.y);
-                        moveto(target.x, target.y);
-                        moveto(origin.x, target.y);
-                        moveto(origin.x, origin.y);
-                        target.x = -1;
-                    } else {
-                        origin.x = user_loc.x;
-                        origin.y = user_loc.y;
-                    }
-                }
-                break;
-
-            case CMD_ARCABS:
+            case CMD_AA:
+            case CMD_AR: // AR: Arc relative
                 if(arc_init()) {
                     while(arc_next(&target))
                         moveto(target.x, target.y);
@@ -258,23 +272,56 @@ void do_stuff (void)
                 }
                 break;
 
-            case CMD_INIT:
+            case CMD_AS:
+                //set_acceleration_mode(hpgl_state.numpad[0]);
+                break;
+
+            case CMD_CI:
+                {
+                    hpgl_point_t point;
+                    user_point_t org = hpgl_state.user_loc;
+                    if(circle_init(&point)) {
+                        on_finish_path = get_pen_status();
+                        pen_control(Pen_Up);
+                        moveto(point.x, point.y);
+                        pen_control(Pen_Down);
+                        while(arc_next(&point))
+                            moveto(point.x, point.y);
+                        moveto(point.x, point.y);
+                        pen_control(Pen_Up);
+                        moveto(target.x, target.y);
+                        target.x = -1;
+                        hpgl_state.user_loc = org;
+                    }
+                }
+                break;
+
+            case CMD_DI:
+                text_direction(hpgl_state.numpad[0], hpgl_state.numpad[1]);
+                break;
+
+            case CMD_EA:
+            case CMD_ER:
+                {
+                    on_finish_path = get_pen_status();
+                    pen_control(Pen_Down);
+                    moveto(target.x, hpgl_state.user_loc.y);
+                    moveto(target.x, target.y);
+                    moveto(hpgl_state.user_loc.x, target.y);
+                    moveto(hpgl_state.user_loc.x, hpgl_state.user_loc.y);
+                    target.x = -1;
+                }
+                break;
+
+            case CMD_IN:
                 // 1. home
                 // 2. init scale etc
                 target.x = target.y = 0;
-                initializing = 1;
-                finish_path = 1;
-                // Get current position.
-                system_convert_array_steps_to_mpos(origin.values, sys.position);
-                break;
-
-            case CMD_SEEK0:
-                seeking0 = SEEK0_SEEK;
-                finish_path = 1;
+                on_finish_path = Pen_Up;
                 break;
 
             case CMD_LB0:
-                finish_path = 1;
+                on_finish_path = Pen_Down;
                 text_beginlabel();
                 break;
 
@@ -294,23 +341,44 @@ void do_stuff (void)
                 //text_active = 1;
                 break;
 
+            case CMD_PA:
+            case CMD_PR:
+                break;
+
+            case CMD_PD:
+                if (get_pen_status() != Pen_Down)
+                    on_finish_path = Pen_Down;
+                break;
+
+            case CMD_PU:
+                if (get_pen_status() != Pen_Up)
+                    on_finish_path = Pen_Up;
+                break;
+
+            case CMD_SEEK0:
+               // go_home();
+                break;
+
             case CMD_SI:
-                text_scale_cm(numpad[0], numpad[1]);
+                text_scale_cm(hpgl_state.numpad[0], hpgl_state.numpad[1]);
+                break;
+
+            case CMD_SP: // Select pen
+                on_finish_path = Pen_Up;
                 break;
 
             case CMD_SR:
-                text_scale_rel(numpad[0], numpad[1]);
-                break;
-            case CMD_DI:
-                text_direction(numpad[0], numpad[1]);
+                text_scale_rel(hpgl_state.numpad[0], hpgl_state.numpad[1]);
                 break;
 
             case CMD_VS:
-                set_speed(numpad[0]);
+                set_speed(hpgl_state.numpad[0]);
                 break;
 
-            case CMD_AS:
-                //set_acceleration_mode(numpad[0]);
+            case CMD_ERR:
+//                hal.stream.write("error ");
+//                hal.stream.write(uitoa((uint32_t)hpgl_get_error()));
+//                hal.stream.write(ASCII_EOL);
                 break;
 
             default:
@@ -318,39 +386,26 @@ void do_stuff (void)
         }
     }
 
-//    if(cmd != CMD_CONT)
-//        hal.stream.write(cmd == CMD_ERR ? "error" ASCII_EOL : "ok" ASCII_EOL);
-/*
-    if (!finish_path && dstx != -1 && dsty != -1) {
-        // Path can be continued because pen state stays the same
-        // Check if the angle permits doing so
-        float a = path_angle_to(dstx, dsty);
-#ifdef SIM
-        fprintf(stderr, "angle=%3.1f\n", a);
-#endif
-#define CURVEANGLE 15
-        if (a > CURVEANGLE) {// && a < (360-CURVEANGLE)) {
-            finish_path = 3;
-        }
-    }
-*/
-/*
-OutputGCode("G1X&1Y&2F&4":U, vector.x1, vector.y1, ?, feedrate).
-OutputGCode("G3X&1Y&2F&4":U, vector.x2, vector.y2, (vector.x2 - vector.x1) / 2.0, (vector.y2 - vector.y1) / 2.0, ?, feedrate).
- */
-    if (finish_path) {
+    if (on_finish_path != Pen_NoAction) {
         protocol_buffer_synchronize();
         sync_position();
-        switch (finish_path) {
-            case 1:
-                pen_control(Pen_Up);
-                break;    /* pen up */
-            case 2:
-                pen_control(Pen_Down);
-                break;    /* pen down */
-            case 3:
-                break;                    /* sharp angle */
-        }
+        pen_control(on_finish_path);
+    }
+
+    switch(cmd) {
+
+        case CMD_IN:
+            plotter_init();
+            // Get current position.
+            system_convert_array_steps_to_mpos(origin.values, sys.position);
+            break;
+
+        case CMD_SP: // Select pen
+            select_pen((uint_fast16_t)truncf(hpgl_state.numpad[0]));
+            break;
+
+        default:
+            break;
     }
 
     if(valid_target(target))
@@ -400,13 +455,12 @@ static void go_home (void)
     process = mc_line(target.values, &plan_data) ? await_homed : NULL;
 }
 
-
 static void report_options (bool newopt)
 {
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:HPGL v0.01]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:HPGL v0.02" ASCII_EOL);
 }
 
 volatile uint16_t rx_count, xoff_count = 0, xon_count = 0;
@@ -438,6 +492,9 @@ ISR_CODE bool ISR_FUNC(stream_insert_buffer)(char c)
         }
     }
 
+    if(c == CMD_JOG_CANCEL && (state_get() & STATE_JOG))
+        system_set_exec_state_flag(EXEC_MOTION_CANCEL);
+
     return false;
 }
 
@@ -445,19 +502,17 @@ status_code_t hpgl_start (sys_state_t state, char *args)
 {
     plotter_init();
 
-    hpgl_init();
-
-    seeking0 = SEEK0_SEEK; // SEEK0_SEEK; SEEK0_SEEK = home?
-
     memcpy(&stream, &hal.stream, sizeof(io_stream_t));
     hal.stream.read = stream_get_data;
     enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(stream_insert_buffer);
 
-    stream.write("Motori HPGL v0.01" ASCII_EOL);
+    stream.write("Motori HPGL v0.02" ASCII_EOL);
 
     if(on_execute_realtime == NULL) {
         on_execute_realtime = grbl.on_execute_realtime;
         grbl.on_execute_realtime = poll_stuff;
+        on_state_change = grbl.on_state_change;
+        grbl.on_state_change = state_changed;
     }
 
     go_home();

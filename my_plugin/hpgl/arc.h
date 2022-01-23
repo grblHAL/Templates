@@ -1,14 +1,15 @@
 #ifndef _ARC_H
 #define _ARC_H
 
-#include <inttypes.h>
-#include <stdbool.h>
+#include "hpgl.h"
 
 /// Initialize the arc based on current location and scratchpad data.
 /// @see numpad
 /// @see user_loc
 /// @returns 0 if the arc is degenerate (0 degrees or R=0)
-int16_t arc_init(void);
+bool arc_init(void);
+
+bool circle_init (hpgl_point_t *target);
 
 /// Calculate the next chord. 
 /// @param x next x in absolute stepper coordinates

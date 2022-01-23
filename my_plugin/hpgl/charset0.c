@@ -80,7 +80,7 @@ copies.
  ** commands needed for switching from one to the other.
  **/
 
-char *charset0[256] = {
+const char *const charset0[256] = {
     /* 0x00 ... 0x1f        */
 
 /**
