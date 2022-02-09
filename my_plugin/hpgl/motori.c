@@ -39,7 +39,7 @@
 /// Yours truly,\n
 ///    Viacheslav Slavinsky
 
-// 2022-01-21 : Modified by Terje Io to make it a grblHAL plugin. Added many commands and refactored code.
+// 2022-01-25 : Modified by Terje Io to make it a grblHAL plugin. Added many commands and refactored code.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,6 +67,7 @@ static on_report_options_ptr on_report_options;
 static on_state_change_ptr on_state_change;
 static coord_data_t target = {0}, origin = {0};
 
+static char pollc = 0;
 
 #define SEEK0_NULL  0
 #define SEEK0_SEEK  1
@@ -220,171 +221,186 @@ void poll_stuff (sys_state_t state)
 ///     - Arc tesselation: happens when an arc is being drawn
 ///
 ///     - Initialization: waits for the head to get home before doing a complete reset
-void do_stuff (void)
+void do_stuff (char c)
 {
+    static volatile bool lock = false;
+
     hpgl_point_t target;
     uint8_t labelchar;
     pen_status_t on_finish_path = Pen_NoAction;
     hpgl_command_t cmd = 0;
 
+    lock = true;
     target.x = target.y = -1;
 
-    if (stream.get_rx_buffer_count()) {
+    if(c == ASCII_CAN) {
 
-        char c = stream.read();
+        // Restore stream handling and exit back to normal operation
 
-        if(c == ASCII_CAN) {
+        protocol_buffer_synchronize();
+        sync_position();
 
-            // Restore stream handling and exit back to normal operation
+        pen_control(Pen_Up);
 
-            protocol_buffer_synchronize();
-            sync_position();
+        memcpy(&hal.stream, &stream, sizeof(io_stream_t));
+        hal.stream.set_enqueue_rt_handler(enqueue_realtime_command);
 
-            pen_control(Pen_Up);
+        stream.write("Bye..." ASCII_EOL);
 
-            memcpy(&hal.stream, &stream, sizeof(io_stream_t));
-            hal.stream.set_enqueue_rt_handler(enqueue_realtime_command);
-
-            stream.write("Bye..." ASCII_EOL);
-
-            if(grbl.on_execute_realtime == poll_stuff) {
-                grbl.on_execute_realtime = on_execute_realtime;
-                on_execute_realtime = NULL;
-            }
-
-            return;
+        if(grbl.on_execute_realtime == poll_stuff) {
+            grbl.on_execute_realtime = on_execute_realtime;
+            on_execute_realtime = NULL;
         }
+        pollc = 0;
+        return;
+    }
 
-        if(!is_plotter_online())
-            return;
+    if(!is_plotter_online()) {
+        pollc = 0;
+        return;
+    }
 
 //        if(c >= ' ')
 //            hal.stream.write_char(c);
 
-        switch((cmd = hpgl_char(c, &target, &labelchar))) {
+    switch((cmd = hpgl_char(c, &target, &labelchar))) {
 
-            case CMD_AA:
-            case CMD_AR: // AR: Arc relative
-                if(arc_init()) {
-                    while(arc_next(&target))
-                        moveto(target.x, target.y);
+        case CMD_AA:
+        case CMD_AR: // AR: Arc relative
+            if(arc_init()) {
+                while(arc_next(&target))
                     moveto(target.x, target.y);
-                }
-                break;
+                moveto(target.x, target.y);
+            }
+            break;
 
-            case CMD_AS:
-                //set_acceleration_mode(hpgl_state.numpad[0]);
-                break;
+        case CMD_AS:
+            //set_acceleration_mode(hpgl_state.numpad[0]);
+            break;
 
-            case CMD_CI:
-                {
-                    hpgl_point_t point;
-                    user_point_t org = hpgl_state.user_loc;
-                    if(circle_init(&point)) {
-                        on_finish_path = get_pen_status();
-                        pen_control(Pen_Up);
-                        moveto(point.x, point.y);
-                        pen_control(Pen_Down);
-                        while(arc_next(&point))
-                            moveto(point.x, point.y);
-                        moveto(point.x, point.y);
-                        pen_control(Pen_Up);
-                        moveto(target.x, target.y);
-                        target.x = -1;
-                        hpgl_state.user_loc = org;
-                    }
-                }
-                break;
-
-            case CMD_DI:
-                text_direction(hpgl_state.numpad[0], hpgl_state.numpad[1]);
-                break;
-
-            case CMD_EA:
-            case CMD_ER:
-                {
+        case CMD_CI:
+            {
+                hpgl_point_t point;
+                user_point_t org = hpgl_state.user_loc;
+                if(circle_init(&point)) {
                     on_finish_path = get_pen_status();
+                    pen_control(Pen_Up);
+                    moveto(point.x, point.y);
                     pen_control(Pen_Down);
-                    moveto(target.x, hpgl_state.user_loc.y);
+                    while(arc_next(&point))
+                        moveto(point.x, point.y);
+                    moveto(point.x, point.y);
+                    pen_control(Pen_Up);
                     moveto(target.x, target.y);
-                    moveto(hpgl_state.user_loc.x, target.y);
-                    moveto(hpgl_state.user_loc.x, hpgl_state.user_loc.y);
                     target.x = -1;
+                    hpgl_state.user_loc = org;
                 }
-                break;
+            }
+            break;
 
-            case CMD_IN:
-                // 1. home
-                // 2. init scale etc
-                target.x = target.y = 0;
-                on_finish_path = Pen_Up;
-                break;
+        case CMD_CP:
+            text_pos(hpgl_state.numpad[0], hpgl_state.numpad[1], &target);
+            break;
 
-            case CMD_LB0:
-                on_finish_path = Pen_Down;
-                text_beginlabel();
-                break;
+        case CMD_DI:
+            text_direction(hpgl_state.numpad[0], hpgl_state.numpad[1]);
+            break;
 
-            case CMD_LB:
-                if (labelchar != 0) {
-                    pen_status_t penny;
-                    //printf_P(PSTR("[%c]"), labelchar);
-                    while(text_char(labelchar, &target, &penny)) {
-                        labelchar = 0;
-                        pen_control(penny);
-                        moveto(target.x, target.y);
-                    }
+        case CMD_EA:
+        case CMD_ER:
+            {
+                on_finish_path = get_pen_status();
+                pen_control(Pen_Down);
+                moveto(target.x, hpgl_state.user_loc.y);
+                moveto(target.x, target.y);
+                moveto(hpgl_state.user_loc.x, target.y);
+                moveto(hpgl_state.user_loc.x, hpgl_state.user_loc.y);
+                target.x = -1;
+            }
+            break;
+
+        case CMD_EW: // EW: Edge Wedge
+            if(wedge_init()) {
+                while(arc_next(&target)) {
+                    moveto(target.x, target.y);
+                            protocol_buffer_synchronize();
+                }
+                moveto(target.x, target.y);
+            }
+            break;
+
+        case CMD_IN:
+            // 1. home
+            // 2. init scale etc
+            target.x = target.y = 0;
+            on_finish_path = Pen_Up;
+            break;
+
+        case CMD_LB0:
+            on_finish_path = Pen_Up;
+            text_beginlabel();
+            break;
+
+        case CMD_LB:
+            if (labelchar != 0) {
+                pen_status_t penny;
+                //printf_P(PSTR("[%c]"), labelchar);
+                while(text_char(labelchar, &target, &penny)) {
+                    labelchar = 0;
                     pen_control(penny);
                     moveto(target.x, target.y);
-                    target.x = -1;
                 }
-                //text_active = 1;
-                break;
+                pen_control(penny);
+                moveto(target.x, target.y);
+                target.x = -1;
+            }
+            //text_active = 1;
+            break;
 
-            case CMD_PA:
-            case CMD_PR:
-                break;
+        case CMD_PA:
+        case CMD_PR:
+            break;
 
-            case CMD_PD:
-                if (get_pen_status() != Pen_Down)
-                    on_finish_path = Pen_Down;
-                break;
+        case CMD_PD:
+            if (get_pen_status() != Pen_Down)
+                on_finish_path = Pen_Down;
+            break;
 
-            case CMD_PU:
-                if (get_pen_status() != Pen_Up)
-                    on_finish_path = Pen_Up;
-                break;
-
-            case CMD_SEEK0:
-               // go_home();
-                break;
-
-            case CMD_SI:
-                text_scale_cm(hpgl_state.numpad[0], hpgl_state.numpad[1]);
-                break;
-
-            case CMD_SP: // Select pen
+        case CMD_PU:
+            if (get_pen_status() != Pen_Up)
                 on_finish_path = Pen_Up;
-                break;
+            break;
 
-            case CMD_SR:
-                text_scale_rel(hpgl_state.numpad[0], hpgl_state.numpad[1]);
-                break;
+        case CMD_SEEK0:
+            // go_home();
+            break;
 
-            case CMD_VS:
-                set_speed(hpgl_state.numpad[0]);
-                break;
+        case CMD_SI:
+            text_scale_cm(hpgl_state.numpad[0], hpgl_state.numpad[1]);
+            break;
 
-            case CMD_ERR:
+        case CMD_SP: // Select pen
+            on_finish_path = Pen_Up;
+            break;
+
+        case CMD_SR:
+            text_scale_rel(hpgl_state.numpad[0], hpgl_state.numpad[1]);
+            break;
+
+        case CMD_VS:
+            set_speed(hpgl_state.numpad[0]);
+            break;
+
+        case CMD_ERR:
 //                hal.stream.write("error ");
 //                hal.stream.write(uitoa((uint32_t)hpgl_get_error()));
 //                hal.stream.write(ASCII_EOL);
-                break;
+            break;
 
-            default:
-                break;
-        }
+        default:
+            break;
     }
+
 
     if (on_finish_path != Pen_NoAction) {
         protocol_buffer_synchronize();
@@ -404,12 +420,26 @@ void do_stuff (void)
             select_pen((uint_fast16_t)truncf(hpgl_state.numpad[0]));
             break;
 
+// ESC command handling
+
+        case CMD_BUFFER_SPACE:
+            hal.stream.write(uitoa(hal.stream.get_rx_buffer_free()));
+            hal.stream.write(ASCII_EOL);
+            break;
+
+        case CMD_BUFFER_SIZE:
+            hal.stream.write(uitoa(hal.rx_buffer_size));
+            hal.stream.write(ASCII_EOL);
+            break;
+
         default:
             break;
     }
 
     if(valid_target(target))
         moveto(target.x, target.y);
+
+    pollc = 0;
 }
 
 static void wait (sys_state_t state)
@@ -424,9 +454,16 @@ void stream_write_null (const char *s)
 
 static void await_homed (sys_state_t state)
 {
-    if(state_get() == STATE_IDLE) {
+    static bool run_ok = false;
+
+    if(state_get() == STATE_CYCLE)
+        run_ok = true;
+
+    if(run_ok && state_get() == STATE_IDLE) {
+
         sync_position();
         process = NULL;
+        run_ok = false;
 
         // Get current position.
         system_convert_array_steps_to_mpos(origin.values, sys.position);
@@ -460,13 +497,26 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:HPGL v0.02" ASCII_EOL);
+        hal.stream.write("[PLUGIN:HPGL v0.03" ASCII_EOL);
 }
 
 volatile uint16_t rx_count, xoff_count = 0, xon_count = 0;
 
 int16_t stream_get_data (void)
 {
+    if(pollc == 0 && stream.get_rx_buffer_count()) {
+        pollc = stream.read();
+        do_stuff(pollc);
+    }
+/*
+
+    static volatile bool lock = false;
+
+    if(lock)
+        return SERIAL_NO_DATA;
+
+    lock = true;
+
     rx_count = stream.get_rx_buffer_count();
 
     if (process == NULL && rx_count) {
@@ -480,10 +530,51 @@ int16_t stream_get_data (void)
         }
     }
 
+    lock = false;
+*/
     return SERIAL_NO_DATA;
 }
 
+void report_buffer_free (sys_state_t state)
+{
+    hal.stream.write(uitoa(hal.stream.get_rx_buffer_free()));
+    hal.stream.write(ASCII_EOL);
+}
+
+ISR_CODE bool ISR_FUNC(stream_insert_buffer)(char c);
+
+ISR_CODE bool ISR_FUNC(stream_parse_esc)(char c)
+{
+    static bool ok = false;
+
+    if(c == '.')
+        ok = true;
+    else if(ok && c == 'B') {
+        ok = false;
+        hal.stream.set_enqueue_rt_handler(stream_insert_buffer);
+    }
+
+    if(c == CMD_JOG_CANCEL && (state_get() & STATE_JOG))
+        system_set_exec_state_flag(EXEC_MOTION_CANCEL);
+
+    if(!ok)
+       protocol_enqueue_rt_command(report_buffer_free);
+ 
+    return true;
+}
+
 ISR_CODE bool ISR_FUNC(stream_insert_buffer)(char c)
+{
+    if(c == ASCII_ESC)
+        hal.stream.set_enqueue_rt_handler(stream_parse_esc);
+
+    if(c == CMD_JOG_CANCEL && (state_get() & STATE_JOG))
+        system_set_exec_state_flag(EXEC_MOTION_CANCEL);
+
+    return c == ASCII_ESC;
+}
+
+ISR_CODE bool ISR_FUNC(stream_insert_buffer2)(char c)
 {
     if(!xoff) {
         if((xoff = stream.get_rx_buffer_free() < 200)) {
@@ -502,11 +593,16 @@ status_code_t hpgl_start (sys_state_t state, char *args)
 {
     plotter_init();
 
-    memcpy(&stream, &hal.stream, sizeof(io_stream_t));
+    if(stream.write == NULL)
+        memcpy(&stream, &hal.stream, sizeof(io_stream_t));
+    else {
+        hal.stream.write = stream.write;
+        hal.stream.write_all = stream.write_all;
+    }
     hal.stream.read = stream_get_data;
     enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(stream_insert_buffer);
 
-    stream.write("Motori HPGL v0.02" ASCII_EOL);
+    stream.write("Motori HPGL v0.03" ASCII_EOL);
 
     if(on_execute_realtime == NULL) {
         on_execute_realtime = grbl.on_execute_realtime;
@@ -518,6 +614,11 @@ status_code_t hpgl_start (sys_state_t state, char *args)
     go_home();
 
     return Status_OK;
+}
+
+void hpgl_boot (sys_state_t state)
+{
+    hpgl_start(state, NULL);
 }
 
 const sys_command_t hpgl_command_list[] = {
@@ -541,4 +642,11 @@ void my_plugin_init (void)
 
     hpgl_commands.on_get_commands = grbl.on_get_commands;
     grbl.on_get_commands = hpgl_get_commands;
+
+    stream.write = NULL;
+#ifdef HPGL_BOOT
+    protocol_enqueue_rt_command(hpgl_boot);
+    memcpy(&stream, &hal.stream, sizeof(io_stream_t));
+    hal.stream.write = hal.stream.write_all = stream_write_null;
+#endif
 }

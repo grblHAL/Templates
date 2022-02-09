@@ -7,7 +7,9 @@
 /// @see numpad
 /// @see user_loc
 /// @returns 0 if the arc is degenerate (0 degrees or R=0)
-bool arc_init(void);
+bool arc_init (void);
+
+bool wedge_init (void);
 
 bool circle_init (hpgl_point_t *target);
 

@@ -54,74 +54,46 @@ typedef enum {
 /// @see do_stuff()
 /// @see hpgl_char()
 typedef enum {
-    CMD_ERR = -1,       ///< Error
-    CMD_CONT = 0,       ///< Continue, do nothing (data coming)
-    CMD_AA = 1,         ///< Start arc absolute
-    CMD_AR,             ///< Start arc relative
-    CMD_AS,             ///< Acceleration Select: 0 = no acceleration (nonstandard)
-    CMD_CI,             ///< Circle
-    CMD_DI,             ///< Label direction: numpad[0]=sin(theta), numpad[1]=cos(theta)
-    CMD_IN,             ///< Initialize
-    CMD_EA,             ///< Rectangle absolute
-    CMD_ER,             ///< Rectangle relative
-    CMD_LB0,            ///< Mark label start
-    CMD_LB,             ///< Label text
-    CMD_LT,             ///< Line type
-    CMD_PA,             ///< Move to returned coordinates
-    CMD_PD,             ///< Pen down
-    CMD_PR,             ///< Nove to relative position
-    CMD_PT,             ///< Pen thickness
-    CMD_PU,             ///< Pen up
-    CMD_SI,             ///< Absolute character size
-    CMD_SP,             ///< Select pen
-    CMD_SR,             ///< Relative character size
-    CMD_VS,             ///< Velocity Select: 0 = fastest (nonstandard)
-    CMD_SEEK0           ///< Locate home position
+    CMD_CONT = 0,               ///< Continue, do nothing (data coming)
+    CMD_ERR,                    ///< Error
+    CMD_LB0,                    ///< Mark label start!!
+    CMD_BUFFER_SPACE,
+    CMD_BUFFER_SIZE,
+    CMD_AA = 'A' << 8 | 'A',    ///< AA: Arc absolute
+    CMD_AR = 'A' << 8 | 'R',    ///< AR: Arc relative
+    CMD_AS = 'A' << 8 | 'S',    ///< AS: Acceleration Select: 0 = no acceleration (nonstandard)
+    CMD_CA = 'C' << 8 | 'A',    ///< CA: Designate alternate character set
+    CMD_CI = 'C' << 8 | 'I',    ///< CI: Circle
+    CMD_CP = 'C' << 8 | 'P',    ///< CP: Character plot
+    CMD_CS = 'C' << 8 | 'S',    ///< CS: Designate standard character set
+    CMD_DI = 'D' << 8 | 'I',    ///< DI: Label direction: numpad[0]=sin(theta), numpad[1]=cos(theta)
+    CMD_DF = 'D' << 8 | 'F',    ///< DF: Set default values
+    CMD_DT = 'D' << 8 | 'T',    ///< DT: Set text terminator
+    CMD_DV = 'D' << 8 | 'V',    ///< DV: Vertical label direction
+    CMD_EA = 'E' << 8 | 'A',    ///< EA: Rectangle absolute
+    CMD_ER = 'E' << 8 | 'R',    ///< EV: Rectangle relative
+    CMD_ES = 'E' << 8 | 'S',    ///< ES: Extra Space
+    CMD_EW = 'E' << 8 | 'W',    ///< EW: Edge Wedge
+    CMD_IN = 'I' << 8 | 'N',    ///< IN: Initialize
+    CMD_IM = 'I' << 8 | 'M',    ///< IM: Input Mask
+    CMD_IP = 'I' << 8 | 'P',    ///< IP: Initialize plotter
+    CMD_LB = 'L' << 8 | 'B',    ///< LB: Label text
+    CMD_LT = 'L' << 8 | 'T',    ///< LT: Line type
+    CMD_OP = 'O' << 8 | 'P',    ///< OP: Output Parameters P1 & P2
+    CMD_PA = 'P' << 8 | 'A',    ///< PA: Move to returned coordinates
+    CMD_PD = 'P' << 8 | 'D',    ///< PD: Pen down
+    CMD_PR = 'P' << 8 | 'R',    ///< PR: Nove to relative position
+    CMD_PT = 'P' << 8 | 'T',    ///< PT: Pen thickness
+    CMD_PU = 'P' << 8 | 'U',    ///< PU: Pen up
+    CMD_SA = 'S' << 8 | 'A',    ///< SA: Select alternate character set
+    CMD_SC = 'S' << 8 | 'C',    ///< SC: Scale
+    CMD_SI = 'S' << 8 | 'I',    ///< SI: Absolute character size
+    CMD_SP = 'S' << 8 | 'P',    ///< SP: Select pen
+    CMD_SR = 'S' << 8 | 'R',    ///< SR: Relative character size
+    CMD_SS = 'S' << 8 | 'S',    ///< SS: Select standard character set
+    CMD_VS = 'V' << 8 | 'S',    ///< VS: Velocity Select: 0 = fastest (nonstandard)
+    CMD_SEEK0 = 'H' << 8 | 'S'  ///< Locate home position
 } hpgl_command_t;
-
-/// Internal scanner state. 
-/// @see hpgl_char()
-typedef enum {
-    STATE_EXP1 = 0,     ///< Expect first char of a command
-    STATE_EXP_A,
-    STATE_EXP_C,
-    STATE_EXP_D,
-    STATE_EXP_E,
-    STATE_EXP_I,
-    STATE_EXP_L,
-    STATE_EXP_O,
-    STATE_EXP_P,
-    STATE_EXP_S,
-    STATE_EXP_V,
-
-    STATE_AA,           ///< Arc absolute
-    STATE_AR,           ///< Arc relative
-    STATE_AS,           ///< Acceleration Select (nonstandard: 0/1)
-    STATE_CI,           ///< plot circle
-    STATE_DF,           ///< Reset to default values
-    STATE_DI,           ///< label direction
-    STATE_DT,           ///< label terminator char
-    STATE_EA,
-    STATE_ER,
-    STATE_IN,           ///< init plotter
-    STATE_IM,           ///< set input mask
-    STATE_IP,           ///< Coordinates
-    STATE_LB,           ///< Label text
-    STATE_LT,           ///< set linetype
-    STATE_OP,           ///< Output coordinates P1 & P2
-    STATE_PT,           ///< set pen thickness
-    STATE_SC,           ///< Scale
-    STATE_SI,           ///< absolute character size in cm
-    STATE_SP,           ///< Select pen
-    STATE_SR,           ///< relative character size
-    STATE_VS,           ///< Velocity Select (nonstandard: value = skip steps, the more the slower)
-
-    STATE_X,
-    STATE_Y,
-    STATE_EXP4,         ///< Expect 4 numbers (like for AA, IP, SC)
-    STATE_SKIP_END,     ///< Skip all until semicolon
-    STATE_AWAIT_TERMINATOR,     ///< Skip whitespace until semicolon
-} scanner_state_t;
 
 typedef enum {
     Pen_NoAction = 0,
@@ -160,7 +132,12 @@ typedef struct {
     uint8_t etxchar;
     uint8_t pattern_type;
     float pattern_length;
+    bool use_alt_charset;
+    bool text_vertical;
     char_size_t character_size;
+    const char *const *charset;
+    const char *const *charset_std;
+    const char *const *charset_alt;
     user_point_t cr_loc;
     hpgl_error_t last_error;
     uint8_t errmask;
@@ -173,6 +150,7 @@ typedef struct {
 } hpgl_state_t;
 
 extern hpgl_state_t hpgl_state;
+typedef hpgl_command_t (*hpgl_char_ptr)(char c, hpgl_point_t *target, uint8_t *lb);
 
 /// Initialize the scanner.
 void hpgl_init();
@@ -184,7 +162,7 @@ void hpgl_init();
 /// @param y    output: destination y (returns -1 if no data)
 /// @param lb   output: next label character (see CMD_LB)
 /// @returns    _hpgl_command
-hpgl_command_t hpgl_char(char c, hpgl_point_t *target, uint8_t *lb);
+extern hpgl_char_ptr hpgl_char;
 
 hpgl_error_t hpgl_get_error (void);
 void hpgl_set_error (hpgl_error_t errnum);

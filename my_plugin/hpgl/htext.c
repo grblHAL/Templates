@@ -15,7 +15,7 @@ user_point_t labelorigin;
 
 user_coord_t sintheta, costheta;
 
-static char *coffs;
+static const char *coffs;
 
 void text_init (void)
 {
@@ -79,6 +79,32 @@ void text_beginlabel (void)
     printf_P(PSTR("Label origin: (%f,%f)\n"), labelorigin.x, labelorigin.y);
 }
 
+bool text_pos (float x, float y, hpgl_point_t *target)
+{
+    user_point_t d;
+
+    if(isnanf(x)) {
+        d.x = labelorigin.x;
+        d.y = labelorigin.y - fontscale.y * 10.0f;
+        rotate(&d.x, &d.y);
+        userscale(d, target, &hpgl_state.user_loc);
+        labelorigin = hpgl_state.user_loc;
+    } else {
+        d.x = hpgl_state.user_loc.x;
+        d.y = hpgl_state.user_loc.y;
+        if(x != 0.0f)
+            d.x += fontscale.x * 5.0f * x;
+        if(y != 0.0f)
+            d.y += fontscale.y * 10.0f * y;
+        rotate(&d.x, &d.y);
+        userscale(d, target, &hpgl_state.user_loc);
+    }
+
+    charorigin = hpgl_state.user_loc;
+
+    return true;
+}
+
 bool text_char (uint8_t c, hpgl_point_t *target, pen_status_t *pen)
 {
     user_point_t d;
@@ -86,40 +112,38 @@ bool text_char (uint8_t c, hpgl_point_t *target, pen_status_t *pen)
     static bool noadvance = false;
     
     if (c != 0) {
-        noadvance = false;
+
+        encoded = 1;
+        *pen = Pen_Up;
+
         switch (c) {
-        case '\r':
-            printf_P(PSTR("CR"));
-            d.x = labelorigin.x;
-            d.y = labelorigin.y;
-            //rotate(&xd, &yd);
-            userscale(d, target, &hpgl_state.user_loc);
-            charorigin = hpgl_state.user_loc;
-            *pen = Pen_Up;
-            encoded = 1;
-            coffs = charset0[0];
-            noadvance = true;
-            break;
-        case '\n':
-            printf_P(PSTR("LF"));
-            d.x = hpgl_state.user_loc.x;
-            d.y = hpgl_state.user_loc.y - fontscale.y * 10.0f;
-            rotate(&d.x, &d.y);
-            userscale(d, target, &hpgl_state.user_loc);
-            charorigin = hpgl_state.user_loc;
-            labelorigin = hpgl_state.user_loc;
-            *pen = Pen_Up;
-            encoded = 1;
-            coffs = charset0[0];
-            noadvance = true;
-            break;
-        default:
-            coffs = charset0[c];
-            *pen = Pen_Up;
-            charorigin = hpgl_state.user_loc;
-            encoded = 1;
-            //printf_P(PSTR("coffs=%x first=%o"), charset0[c], *charset0[c]);
-            break;
+            case '\r':
+                printf_P(PSTR("CR"));
+                d.x = labelorigin.x;
+                d.y = labelorigin.y;
+                //rotate(&xd, &yd);
+                userscale(d, target, &hpgl_state.user_loc);
+                coffs = hpgl_state.charset[0];
+                charorigin = hpgl_state.user_loc;
+                noadvance = true;
+                break;
+            case '\n':
+                printf_P(PSTR("LF"));
+                d.x = hpgl_state.user_loc.x;
+                d.y = hpgl_state.user_loc.y - fontscale.y * 10.0f;
+                rotate(&d.x, &d.y);
+                userscale(d, target, &hpgl_state.user_loc);
+                coffs = hpgl_state.charset[0];
+                charorigin = hpgl_state.user_loc;
+                labelorigin = hpgl_state.user_loc;
+                noadvance = true;
+                break;
+            default:
+                coffs = hpgl_state.charset[c];
+                charorigin = hpgl_state.user_loc;
+                noadvance = false;
+                //printf_P(PSTR("coffs=%x first=%o"), charset0[c], *charset0[c]);
+                break;
         } 
 
     } else {
