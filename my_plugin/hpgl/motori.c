@@ -75,6 +75,7 @@ static char pollc = 0;
 
 float feed_rate = 1000; // mm/min
 
+static void go_home (void);
 bool moveto (hpgl_coord_t x, hpgl_coord_t y);
 
 __attribute__((weak)) void select_pen (uint_fast16_t pen)
@@ -86,6 +87,14 @@ __attribute__((weak)) void select_pen (uint_fast16_t pen)
 }
 
 __attribute__((weak)) void pen_led (bool on)
+{
+}
+
+__attribute__((weak)) void online_led (bool on)
+{
+}
+
+__attribute__((weak)) void alert_led (bool on)
 {
 }
 
@@ -332,6 +341,10 @@ void do_stuff (char c)
         case CMD_IN:
             // 1. home
             // 2. init scale etc
+#ifdef GO_HOME_ON_IN
+             if(settings.homing.flags.enabled)
+                go_home();
+#endif
             target.x = target.y = 0;
             on_finish_path = Pen_Up;
             break;
@@ -372,7 +385,7 @@ void do_stuff (char c)
             break;
 
         case CMD_SEEK0:
-            // go_home();
+            go_home();
             break;
 
         case CMD_SI:
@@ -456,23 +469,27 @@ static void await_homed (sys_state_t state)
 {
     static bool run_ok = false;
 
-    if(state_get() == STATE_CYCLE)
+    if(state == STATE_CYCLE)
         run_ok = true;
 
-    if(run_ok && state_get() == STATE_IDLE) {
+    if(run_ok && state != STATE_CYCLE) {
 
-        sync_position();
         process = NULL;
         run_ok = false;
 
-        // Get current position.
-        system_convert_array_steps_to_mpos(origin.values, sys.position);
+        if(state == STATE_IDLE) {
 
-        plotter_init();
+            sync_position();
+
+            // Get current position.
+            system_convert_array_steps_to_mpos(origin.values, sys.position);
+
+            plotter_init();
+        }
 
         hal.stream.write = stream.write;
         hal.stream.write_all = stream.write_all;
-        hal.stream.write("Ready..." ASCII_EOL);
+        hal.stream.write(state == STATE_IDLE ? "Ready..." ASCII_EOL : "Failed..." ASCII_EOL);
     }
 }
 
@@ -484,9 +501,10 @@ static void go_home (void)
     process = wait;
     hal.stream.write = hal.stream.write_all = stream_write_null;
 
+    pen_control(Pen_Up);
     system_execute_line(cmd);
 
-    plan_data.feed_rate = 4000.0f;
+    plan_data.condition.rapid_motion = On;
     target.values[X_AXIS] = settings.axis[X_AXIS].max_travel; //
     target.values[Y_AXIS] = 0.0f;
     process = mc_line(target.values, &plan_data) ? await_homed : NULL;
@@ -535,13 +553,58 @@ int16_t stream_get_data (void)
     return SERIAL_NO_DATA;
 }
 
+//
+// Device Control Instructions handling (ESC . ...)
+//
+
 void report_buffer_free (sys_state_t state)
 {
     hal.stream.write(uitoa(hal.stream.get_rx_buffer_free()));
     hal.stream.write(ASCII_EOL);
 }
 
+void report_buffer_size (sys_state_t state)
+{
+    hal.stream.write(uitoa(hal.rx_buffer_size - 1));
+    hal.stream.write(ASCII_EOL);
+}
+
+void report_extended_error (sys_state_t state)
+{
+    uint32_t error = 0;
+    
+    hal.stream.write(uitoa(error));
+    hal.stream.write(ASCII_EOL);
+    
+    if(error == 0)
+        alert_led(false);
+}
+
+void report_extended_status (sys_state_t state)
+{
+    union {
+        uint8_t status;
+        uint8_t unused       :2,
+                buffer_empty :1,
+                ready        :2,
+                unused2      :3;
+    } hpgl_status = {0};
+    
+    hpgl_status.buffer_empty = hal.stream.get_rx_buffer_free() == hal.rx_buffer_size - 1;
+
+    hal.stream.write(uitoa(hpgl_status.status));
+    hal.stream.write(ASCII_EOL);
+}
+
 ISR_CODE bool ISR_FUNC(stream_insert_buffer)(char c);
+
+ISR_CODE bool ISR_FUNC(await_colon)(char c)
+{
+    if(c == ':')
+        hal.stream.set_enqueue_rt_handler(stream_insert_buffer);
+    else if(c == CMD_JOG_CANCEL && (state_get() & STATE_JOG))
+        system_set_exec_state_flag(EXEC_MOTION_CANCEL);
+}
 
 ISR_CODE bool ISR_FUNC(stream_parse_esc)(char c)
 {
@@ -549,17 +612,77 @@ ISR_CODE bool ISR_FUNC(stream_parse_esc)(char c)
 
     if(c == '.')
         ok = true;
-    else if(ok && c == 'B') {
+
+    else if(ok) {
+        
+        bool wait_for_colon = false;
+
         ok = false;
-        hal.stream.set_enqueue_rt_handler(stream_insert_buffer);
+        
+        switch(c) {
+        
+            case '(':
+            case 'Y':
+                online_led(true);
+                break;
+        
+            case ')':
+            case 'Z':
+                online_led(false);
+                break;
+
+            case '@':
+                hal.stream.set_enqueue_rt_handler(await_colon);
+                break;
+
+            case 'B':
+                protocol_enqueue_rt_command(report_buffer_free);
+                break;
+                
+            case 'E':
+                protocol_enqueue_rt_command(report_extended_error);
+                break;
+        
+            case 'H':
+            case 'I':
+                wait_for_colon = true;
+                break;
+        
+            case 'J':
+                break;
+  
+            case 'K':
+                protocol_enqueue_rt_command(report_buffer_size);
+                break;
+
+            case 'L':   
+                break;
+
+            case 'M':
+                wait_for_colon = true;
+                break;
+      
+            case 'N':
+                wait_for_colon = true;
+                break;
+     
+            case 'O':
+                protocol_enqueue_rt_command(report_extended_status);
+                break;
+
+            case 'R':
+                break;   
+        }
+        
+        if(wait_for_colon)
+            hal.stream.set_enqueue_rt_handler(await_colon);
+        else
+            hal.stream.set_enqueue_rt_handler(stream_insert_buffer);
     }
 
     if(c == CMD_JOG_CANCEL && (state_get() & STATE_JOG))
         system_set_exec_state_flag(EXEC_MOTION_CANCEL);
 
-    if(!ok)
-       protocol_enqueue_rt_command(report_buffer_free);
- 
     return true;
 }
 
@@ -589,6 +712,8 @@ ISR_CODE bool ISR_FUNC(stream_insert_buffer2)(char c)
     return false;
 }
 
+// End of Device Control Instructions handling
+
 status_code_t hpgl_start (sys_state_t state, char *args)
 {
     plotter_init();
@@ -602,7 +727,7 @@ status_code_t hpgl_start (sys_state_t state, char *args)
     hal.stream.read = stream_get_data;
     enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(stream_insert_buffer);
 
-    stream.write("Motori HPGL v0.03" ASCII_EOL);
+    stream.write("Motori HPGL v0.04" ASCII_EOL);
 
     if(on_execute_realtime == NULL) {
         on_execute_realtime = grbl.on_execute_realtime;

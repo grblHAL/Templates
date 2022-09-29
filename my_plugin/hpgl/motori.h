@@ -7,6 +7,8 @@
 #define PEN_DOWN_DELAY  20
 #define PEN_LIFT_DELAY  50
 
+#define GO_HOME_ON_IN // Uncomment to disable
+
 #define PSTR(s) s
 #define printf_P printf
 #define DELAY_MS(ms) hal.delay_ms(ms, NULL)
