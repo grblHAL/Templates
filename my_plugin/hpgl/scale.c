@@ -97,5 +97,5 @@ void output_P1P2 (void)
     hal.stream.write(uitoa(hpgl_state.ip_pad[2]));
     hal.stream.write(",");
     hal.stream.write(uitoa(hpgl_state.ip_pad[3]));
-    hal.stream.write(ASCII_EOL);
+    hal.stream.write(hpgl_state.term);
 }

@@ -57,25 +57,64 @@
 #include "../grbl/motion_control.h"
 #include "../grbl/state_machine.h"
 
+#define VERSION "v0.05"
+#define DC_VALUES_MAX 12
+
+typedef enum {
+    IOError_None = 0,
+    IOError_DCI_Overlap = 10,
+    IOError_DCI_InvalidCmd = 11,
+    IOError_DCI_InvalidData = 12,
+    IOError_OutOfRange = 13,
+    IOError_TooManyParameters = 14,
+    IOError_FormatError = 15,
+    IOError_Overflow = 16
+} io_error_t;
+
+
+static char pollc = 0;
+static float feed_rate = 1000; // mm/min
+static volatile uint16_t rx_count;
 static volatile bool xoff = false;
 static uint32_t last_action = 0;
 static volatile pen_status_t pen_status = Pen_Unknown;          ///< pen status: 0 = up
 static io_stream_t stream;
-static enqueue_realtime_command_ptr enqueue_realtime_command;
+static enqueue_realtime_command_ptr enqueue_realtime_command, base_handler;
 static on_execute_realtime_ptr on_execute_realtime, process;
 static on_report_options_ptr on_report_options;
 static on_state_change_ptr on_state_change;
 static coord_data_t target = {0}, origin = {0};
-
-static char pollc = 0;
+static struct {
+    uint_fast8_t i;
+    uint_fast8_t j;
+    io_error_t error;
+    char cmd;
+    char value[DC_VALUES_MAX][9];
+} dc_values = {0};
+static struct {
+    uint_fast16_t block_size;
+    uint_fast16_t xoff_threshold;
+    uint_fast16_t xon_level;
+    uint_fast16_t turnaround_delay;
+    uint_fast16_t intercharacter_delay;
+    uint_fast8_t handshake_mode;
+    char enquiry;
+    char output_trigger;
+    char echo_terminator;
+    char output_initiator;
+    char xon_ack_response[11];
+    char xoff_immediate_response[11];
+} dc_data = {0};
 
 #define SEEK0_NULL  0
 #define SEEK0_SEEK  1
 #define SEEK0_DONE  0x80
 
-float feed_rate = 1000; // mm/min
-
 static void go_home (void);
+static ISR_CODE bool ISR_FUNC(stream_insert_buffer)(char c);
+static ISR_CODE bool ISR_FUNC(stream_insert_buffer_xoff)(char c);
+static ISR_CODE bool ISR_FUNC(stream_insert_buffer_enq)(char c);
+
 bool moveto (hpgl_coord_t x, hpgl_coord_t y);
 
 __attribute__((weak)) void select_pen (uint_fast16_t pen)
@@ -232,14 +271,11 @@ void poll_stuff (sys_state_t state)
 ///     - Initialization: waits for the head to get home before doing a complete reset
 void do_stuff (char c)
 {
-    static volatile bool lock = false;
-
     hpgl_point_t target;
     uint8_t labelchar;
     pen_status_t on_finish_path = Pen_NoAction;
     hpgl_command_t cmd = 0;
 
-    lock = true;
     target.x = target.y = -1;
 
     if(c == ASCII_CAN) {
@@ -268,9 +304,6 @@ void do_stuff (char c)
         pollc = 0;
         return;
     }
-
-//        if(c >= ' ')
-//            hal.stream.write_char(c);
 
     switch((cmd = hpgl_char(c, &target, &labelchar))) {
 
@@ -433,18 +466,6 @@ void do_stuff (char c)
             select_pen((uint_fast16_t)truncf(hpgl_state.numpad[0]));
             break;
 
-// ESC command handling
-
-        case CMD_BUFFER_SPACE:
-            hal.stream.write(uitoa(hal.stream.get_rx_buffer_free()));
-            hal.stream.write(ASCII_EOL);
-            break;
-
-        case CMD_BUFFER_SIZE:
-            hal.stream.write(uitoa(hal.rx_buffer_size));
-            hal.stream.write(ASCII_EOL);
-            break;
-
         default:
             break;
     }
@@ -510,49 +531,6 @@ static void go_home (void)
     process = mc_line(target.values, &plan_data) ? await_homed : NULL;
 }
 
-static void report_options (bool newopt)
-{
-    on_report_options(newopt);
-
-    if(!newopt)
-        hal.stream.write("[PLUGIN:HPGL v0.03" ASCII_EOL);
-}
-
-volatile uint16_t rx_count, xoff_count = 0, xon_count = 0;
-
-int16_t stream_get_data (void)
-{
-    if(pollc == 0 && stream.get_rx_buffer_count()) {
-        pollc = stream.read();
-        do_stuff(pollc);
-    }
-/*
-
-    static volatile bool lock = false;
-
-    if(lock)
-        return SERIAL_NO_DATA;
-
-    lock = true;
-
-    rx_count = stream.get_rx_buffer_count();
-
-    if (process == NULL && rx_count) {
-
-        do_stuff();
-
-        if(xoff && rx_count < 400) {
-            xoff = false;
-            xon_count++;
-            hal.stream.write_char(ASCII_XON);
-        }
-    }
-
-    lock = false;
-*/
-    return SERIAL_NO_DATA;
-}
-
 //
 // Device Control Instructions handling (ESC . ...)
 //
@@ -571,23 +549,25 @@ void report_buffer_size (sys_state_t state)
 
 void report_extended_error (sys_state_t state)
 {
-    uint32_t error = 0;
-    
-    hal.stream.write(uitoa(error));
+    hal.stream.write(uitoa(dc_values.error));
     hal.stream.write(ASCII_EOL);
-    
-    if(error == 0)
+
+    if(dc_values.error == IOError_None)
         alert_led(false);
+
+    dc_values.error = IOError_None; //??
 }
 
 void report_extended_status (sys_state_t state)
 {
     union {
         uint8_t status;
-        uint8_t unused       :2,
-                buffer_empty :1,
-                ready        :2,
-                unused2      :3;
+        struct {
+            uint8_t unused       :2,
+                    buffer_empty :1,
+                    ready        :2,
+                    unused2      :3;
+        };
     } hpgl_status = {0};
     
     hpgl_status.buffer_empty = hal.stream.get_rx_buffer_free() == hal.rx_buffer_size - 1;
@@ -596,17 +576,124 @@ void report_extended_status (sys_state_t state)
     hal.stream.write(ASCII_EOL);
 }
 
-ISR_CODE bool ISR_FUNC(stream_insert_buffer)(char c);
-
-ISR_CODE bool ISR_FUNC(await_colon)(char c)
+static inline bool get_value (char *s, int32_t *v)
 {
-    if(c == ':')
-        hal.stream.set_enqueue_rt_handler(stream_insert_buffer);
-    else if(c == CMD_JOG_CANCEL && (state_get() & STATE_JOG))
-        system_set_exec_state_flag(EXEC_MOTION_CANCEL);
+    bool ok;
+    float val;
+    uint_fast8_t cc = 0;
+
+    if((ok = read_float(s, &cc, &val)))
+        *v = (int32_t)val;
+
+    return ok;
 }
 
-ISR_CODE bool ISR_FUNC(stream_parse_esc)(char c)
+static ISR_CODE void ISR_FUNC(set_handshake_mode)(void)
+{
+    if(dc_data.enquiry)
+        base_handler = stream_insert_buffer_enq;
+    else if(*dc_data.xon_ack_response && *dc_data.xoff_immediate_response)
+        base_handler = stream_insert_buffer_xoff;
+    else
+        base_handler = stream_insert_buffer;
+
+    hpgl_state.comm.enable_dtr = base_handler == stream_insert_buffer && stream_get_flags(hal.stream).rts_handshake;
+    hal.stream.set_enqueue_rt_handler(base_handler);
+}
+
+static ISR_CODE void ISR_FUNC(process_dci)(void)
+{
+    int32_t val[DC_VALUES_MAX];
+    bool errors = false, error[DC_VALUES_MAX], present[DC_VALUES_MAX] = {0};
+    uint_fast8_t i = dc_values.j;
+
+    if(i > 0) {
+        do {
+            i--;
+            if((present[i] = *dc_values.value[i])) {
+                if((error[i] = !get_value(dc_values.value[i], &val[i])))
+                    errors = true;
+            }
+        } while(i);
+    }
+
+    if(errors)
+        dc_values.error = IOError_DCI_InvalidData;
+
+    else switch(dc_values.cmd) {
+
+        case '@':
+            // val[0]: optional max buffer size
+
+            if(present[1] && val[1] <= 255)
+                hpgl_state.comm.value = (uint8_t)val[1];
+            else
+                dc_values.error = IOError_OutOfRange;
+            break;
+
+        case 'H':
+        case 'I':
+            if((dc_data.enquiry = present[1] ? val[1] : 0))
+                dc_data.block_size = present[0] ? min(val[0], hal.rx_buffer_size) : 80;
+            else {
+                dc_data.xoff_threshold = present[0] ? min(val[0], hal.rx_buffer_size) : 0;
+                if(dc_data.xoff_threshold > 512)
+                    dc_data.xon_level = hal.rx_buffer_size - (dc_data.xoff_threshold + 1);
+            }
+            for(i = 2; i < dc_values.j; i++)
+                dc_data.xon_ack_response[i - 2] = (uint8_t)val[i];
+            dc_data.xon_ack_response[i - 2] = '\0';
+            if(*dc_data.xon_ack_response == '\0')
+                dc_data.enquiry = 0;
+            dc_data.handshake_mode = dc_data.enquiry && dc_data.xon_ack_response ? (dc_values.cmd == 'I' ? 2 : 1) : 0;
+            set_handshake_mode();
+            break;
+
+        case 'M':
+            dc_data.turnaround_delay = present[0] ? (uint_fast16_t)((float)((uint32_t)((float)val[0] * 1.1875f) % 65536) / 1.2f) : 0;
+            dc_data.output_trigger = present[1] ? (uint8_t)val[1] : '\0';
+            dc_data.echo_terminator = present[2] ? (uint8_t)val[2] : '\0';
+            hpgl_state.term[0] = present[3] ? (uint8_t)val[3] : '\r';
+            hpgl_state.term[1] = present[4] ? (uint8_t)val[4] : '\0';
+            dc_data.output_initiator = present[5] ? (uint8_t)val[5] : '\0';
+            break;
+
+        case 'N':
+            dc_data.intercharacter_delay = present[0] ? (uint_fast16_t)((float)((uint32_t)((float)val[0] * 1.1875f) % 65536) / 1.2f) : 0;
+            for(i = 1; i < dc_values.j; i++)
+                dc_data.xoff_immediate_response[i - 1] = (uint8_t)val[i];
+            dc_data.xoff_immediate_response[i - 1] = '\0';
+            set_handshake_mode();
+            break;
+    }
+}
+
+static ISR_CODE bool ISR_FUNC(await_colon)(char c)
+{
+    if(c == ':' || (c == ASCII_ESC && dc_values.j >= DC_VALUES_MAX)) {
+        hal.stream.set_enqueue_rt_handler(base_handler);
+        dc_values.value[dc_values.j][dc_values.i] = '\0';
+        if(*dc_values.value[dc_values.j])
+            dc_values.j++;
+        process_dci();
+    } else if(c == ';') {
+        dc_values.value[dc_values.j++][dc_values.i] = '\0';
+        dc_values.i = 0;
+        if(dc_values.j < DC_VALUES_MAX)
+            dc_values.value[dc_values.j][dc_values.i] = '\0';
+        else
+            dc_values.error = IOError_TooManyParameters;
+    } else if(c == CMD_JOG_CANCEL && (state_get() & STATE_JOG))
+        system_set_exec_state_flag(EXEC_MOTION_CANCEL);
+    else if (dc_values.j < DC_VALUES_MAX && dc_values.i < 8)
+        dc_values.value[dc_values.j][dc_values.i++] = c;
+    else
+        dc_values.error = dc_values.i == 8 ? IOError_Overflow : IOError_TooManyParameters;
+
+    return true;
+}
+
+static ISR_CODE bool ISR_FUNC(stream_parse_esc)(char c)
 {
     static bool ok = false;
 
@@ -632,7 +719,7 @@ ISR_CODE bool ISR_FUNC(stream_parse_esc)(char c)
                 break;
 
             case '@':
-                hal.stream.set_enqueue_rt_handler(await_colon);
+                wait_for_colon = true;
                 break;
 
             case 'B':
@@ -652,10 +739,11 @@ ISR_CODE bool ISR_FUNC(stream_parse_esc)(char c)
                 break;
   
             case 'K':
-                protocol_enqueue_rt_command(report_buffer_size);
+                // flush buffer and reset parser
                 break;
 
             case 'L':   
+                protocol_enqueue_rt_command(report_buffer_size);
                 break;
 
             case 'M':
@@ -671,13 +759,27 @@ ISR_CODE bool ISR_FUNC(stream_parse_esc)(char c)
                 break;
 
             case 'R':
-                break;   
+                memset(&dc_data, 0, sizeof(dc_data));
+                dc_data.block_size = 80;
+                dc_data.xon_level = 512;
+                set_handshake_mode();
+                break;
+
+            default:
+                dc_values.error = c == ASCII_ESC ? IOError_DCI_Overlap : IOError_DCI_InvalidCmd;
+                break;
+
         }
         
-        if(wait_for_colon)
+        if(wait_for_colon) {
+            dc_values.cmd = c;
+            dc_values.i = dc_values.j = 0;
             hal.stream.set_enqueue_rt_handler(await_colon);
-        else
-            hal.stream.set_enqueue_rt_handler(stream_insert_buffer);
+        } else
+            hal.stream.set_enqueue_rt_handler(base_handler);
+    } else {
+        hal.stream.set_enqueue_rt_handler(base_handler);
+        dc_values.error = c == ASCII_ESC ? IOError_DCI_Overlap : IOError_DCI_InvalidData;
     }
 
     if(c == CMD_JOG_CANCEL && (state_get() & STATE_JOG))
@@ -686,33 +788,234 @@ ISR_CODE bool ISR_FUNC(stream_parse_esc)(char c)
     return true;
 }
 
-ISR_CODE bool ISR_FUNC(stream_insert_buffer)(char c)
+// End of Device Control Instructions handling
+
+// Normal mode data transfer
+
+int16_t stream_get_data (void)
 {
-    if(c == ASCII_ESC)
-        hal.stream.set_enqueue_rt_handler(stream_parse_esc);
+    if(pollc == 0 && stream.get_rx_buffer_count()) {
+        pollc = stream.read();
+        do_stuff(pollc);
+    }
 
-    if(c == CMD_JOG_CANCEL && (state_get() & STATE_JOG))
-        system_set_exec_state_flag(EXEC_MOTION_CANCEL);
-
-    return c == ASCII_ESC;
+    return SERIAL_NO_DATA;
 }
 
-ISR_CODE bool ISR_FUNC(stream_insert_buffer2)(char c)
+static ISR_CODE bool ISR_FUNC(stream_insert_buffer)(char c)
 {
-    if(!xoff) {
-        if((xoff = stream.get_rx_buffer_free() < 200)) {
-            hal.stream.write_char(ASCII_XOFF);
-            xoff_count++;
+    bool claim = false;
+
+    switch(c) {
+
+        case ASCII_ESC:
+            claim = true;
+            hal.stream.set_enqueue_rt_handler(stream_parse_esc);
+            break;
+
+        case ASCII_ENQ:
+            if((claim = dc_data.enquiry == '\0'))
+                hal.stream.write_char(ASCII_ACK);
+            break;
+
+        case CMD_JOG_CANCEL:
+            if((claim = !!(state_get() & STATE_JOG)))
+                system_set_exec_state_flag(EXEC_MOTION_CANCEL);
+            break;
+    }
+
+    return claim;
+}
+
+// Xon/Xoff mode data transfer
+
+int16_t stream_get_data_xon (void)
+{
+    static volatile bool lock = false;
+
+    if(lock)
+        return SERIAL_NO_DATA;
+
+    lock = true;
+
+    rx_count = stream.get_rx_buffer_count();
+
+    if (process == NULL && rx_count) {
+
+        if(pollc == 0) {
+            pollc = stream.read();
+            do_stuff(pollc);
+        }
+
+        if(xoff && rx_count <= dc_data.xon_level) {
+            xoff = false;
+            hal.stream.write(dc_data.xon_ack_response);
+            hal.stream.read = stream_get_data;
         }
     }
 
-    if(c == CMD_JOG_CANCEL && (state_get() & STATE_JOG))
-        system_set_exec_state_flag(EXEC_MOTION_CANCEL);
+    lock = false;
 
-    return false;
+    return SERIAL_NO_DATA;
 }
 
-// End of Device Control Instructions handling
+static ISR_CODE bool ISR_FUNC(stream_insert_buffer_xoff)(char c)
+{
+    bool claim = false;
+
+    if(!xoff) {
+        if((xoff = stream.get_rx_buffer_free() < dc_data.xoff_threshold)) {
+            hal.stream.write(dc_data.xoff_immediate_response);
+            hal.stream.read = stream_get_data_xon;
+        }
+    }
+
+    switch(c) {
+
+        case ASCII_ESC:
+            claim = true;
+            hal.stream.set_enqueue_rt_handler(stream_parse_esc);
+            break;
+
+        case ASCII_ENQ:
+            if((claim = dc_data.enquiry == '\0'))
+                hal.stream.write_char(ASCII_ACK);
+            break;
+
+        case CMD_JOG_CANCEL:
+            if((claim = !!(state_get() & STATE_JOG)))
+                system_set_exec_state_flag(EXEC_MOTION_CANCEL);
+            break;
+
+    }
+
+    return claim;
+}
+
+// ENQ/ACK mode data transfer
+
+int16_t stream_get_data_ack (void)
+{
+    static volatile bool lock = false;
+
+    if(lock)
+        return SERIAL_NO_DATA;
+
+    lock = true;
+
+    rx_count = stream.get_rx_buffer_count();
+
+    if (process == NULL && rx_count) {
+
+        if(pollc == 0) {
+            pollc = stream.read();
+            do_stuff(pollc);
+        }
+
+        if(stream.get_rx_buffer_free() >= dc_data.block_size) {
+            hal.stream.write(dc_data.xon_ack_response);
+            if(dc_data.handshake_mode != 2)
+                hal.stream.write(hpgl_state.term);
+            hal.stream.read = stream_get_data;
+        }
+    }
+
+    lock = false;
+
+    return SERIAL_NO_DATA;
+}
+
+static ISR_CODE void ISR_FUNC(stream_send_ack)(void)
+{
+    if(hal.stream.get_rx_buffer_free() >= dc_data.block_size) {
+        hal.stream.write(dc_data.xon_ack_response);
+        if(dc_data.handshake_mode != 2)
+            hal.stream.write(hpgl_state.term);
+    } else
+        hal.stream.read = stream_get_data_ack;
+}
+
+static ISR_CODE bool ISR_FUNC(stream_await_echo_terminator)(char c)
+{
+    if(c == dc_data.echo_terminator)
+        hal.stream.set_enqueue_rt_handler(base_handler);
+
+    return true;
+}
+
+static ISR_CODE void ISR_FUNC(stream_send_initiator)(void)
+{
+    hal.stream.set_enqueue_rt_handler(dc_data.echo_terminator && dc_data.handshake_mode != 2 ? stream_await_echo_terminator : base_handler);
+
+    if(dc_data.handshake_mode == 0 && dc_data.output_initiator)
+        hal.stream.write_char(dc_data.output_initiator);
+
+    stream_send_ack();
+}
+
+static ISR_CODE bool ISR_FUNC(stream_await_trigger)(char c)
+{
+    if(c == dc_data.output_trigger)
+        hal.delay_ms(dc_data.turnaround_delay + dc_data.intercharacter_delay, stream_send_initiator);
+
+    return true;
+}
+
+static ISR_CODE bool ISR_FUNC(stream_insert_buffer_enq)(char c)
+{
+    bool claim = false;
+
+    if(c == dc_data.enquiry) {
+
+        if(dc_data.handshake_mode != 2 && dc_data.output_trigger) {
+            hal.stream.set_enqueue_rt_handler(stream_await_trigger);
+            return true;
+        } else if(dc_data.turnaround_delay) {
+            hal.delay_ms(dc_data.turnaround_delay + dc_data.intercharacter_delay, stream_send_initiator);
+            return true;
+        } else if(dc_data.handshake_mode != 2 && dc_data.echo_terminator)
+            hal.stream.set_enqueue_rt_handler(stream_await_echo_terminator);
+
+        if(dc_data.handshake_mode == 0 && dc_data.output_initiator)
+            hal.stream.write_char(dc_data.output_initiator);
+
+        if(*dc_data.xoff_immediate_response) {
+            hal.stream.write(dc_data.xoff_immediate_response);
+            if(dc_data.handshake_mode != 2)
+                hal.stream.write(hpgl_state.term);
+        }
+
+        stream_send_ack();
+
+    } else switch(c) {
+
+        case ASCII_ESC:
+            claim = true;
+            hal.stream.set_enqueue_rt_handler(stream_parse_esc);
+            break;
+
+        case ASCII_ENQ:
+            hal.stream.set_enqueue_rt_handler(stream_await_trigger);
+            break;
+
+        case CMD_JOG_CANCEL:
+            if((claim = !!(state_get() & STATE_JOG)))
+                system_set_exec_state_flag(EXEC_MOTION_CANCEL);
+            break;
+    }
+
+    return claim;
+}
+
+//
+
+static void report_options (bool newopt)
+{
+    on_report_options(newopt);
+
+    if(!newopt)
+        hal.stream.write("[PLUGIN:HPGL " VERSION ASCII_EOL);
+}
 
 status_code_t hpgl_start (sys_state_t state, char *args)
 {
@@ -725,9 +1028,10 @@ status_code_t hpgl_start (sys_state_t state, char *args)
         hal.stream.write_all = stream.write_all;
     }
     hal.stream.read = stream_get_data;
-    enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(stream_insert_buffer);
+    base_handler = stream_insert_buffer;
+    enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(base_handler);
 
-    stream.write("Motori HPGL v0.04" ASCII_EOL);
+    stream.write("Motori HPGL " VERSION ASCII_EOL);
 
     if(on_execute_realtime == NULL) {
         on_execute_realtime = grbl.on_execute_realtime;

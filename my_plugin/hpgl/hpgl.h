@@ -6,6 +6,10 @@
 
 //#define HPGL_DEBUG
 
+#ifndef HPGL_DEVICE_IDENTIFICATION
+#define HPGL_DEVICE_IDENTIFICATION "HP7574A"
+#endif
+
 #define SCRATCHPAD_SIZE 64
 
 #define MAX_X_A4    11040
@@ -57,8 +61,6 @@ typedef enum {
     CMD_CONT = 0,               ///< Continue, do nothing (data coming)
     CMD_ERR,                    ///< Error
     CMD_LB0,                    ///< Mark label start!!
-    CMD_BUFFER_SPACE,
-    CMD_BUFFER_SIZE,
     CMD_AA = 'A' << 8 | 'A',    ///< AA: Arc absolute
     CMD_AR = 'A' << 8 | 'R',    ///< AR: Arc relative
     CMD_AS = 'A' << 8 | 'S',    ///< AS: Acceleration Select: 0 = no acceleration (nonstandard)
@@ -79,7 +81,21 @@ typedef enum {
     CMD_IP = 'I' << 8 | 'P',    ///< IP: Initialize plotter
     CMD_LB = 'L' << 8 | 'B',    ///< LB: Label text
     CMD_LT = 'L' << 8 | 'T',    ///< LT: Line type
+
+    CMD_OA = 'O' << 8 | 'A',    ///< OA: Output Actual Position and Pen Status
+    CMD_OC = 'O' << 8 | 'C',    ///< OC: Output Commanded Position and Pen Status
+    CMD_OD = 'O' << 8 | 'D',    ///< OD: Output Digitized Point and Pen Status
+    CMD_OE = 'O' << 8 | 'E',    ///< OE: Output Error
+    CMD_OF = 'O' << 8 | 'F',    ///< OF: Output Factors
+    CMD_OH = 'O' << 8 | 'H',    ///< OH: Output Hard-clip Limits
+    CMD_OI = 'O' << 8 | 'I',    ///< OI: Output Identification
+    CMD_OO = 'O' << 8 | 'O',    ///< OO: Output Options
+   
     CMD_OP = 'O' << 8 | 'P',    ///< OP: Output Parameters P1 & P2
+    
+    CMD_OS = 'O' << 8 | 'S',    ///< OS: Output Status
+    CMD_OW = 'O' << 8 | 'W',    ///< OW: Output Window
+ 
     CMD_PA = 'P' << 8 | 'A',    ///< PA: Move to returned coordinates
     CMD_PD = 'P' << 8 | 'D',    ///< PD: Pen down
     CMD_PR = 'P' << 8 | 'R',    ///< PR: Nove to relative position
@@ -125,11 +141,38 @@ typedef struct {
     float height;
 } char_size_t;
 
+typedef union {
+    uint8_t value;
+    struct {
+        uint8_t pen_down        :1,
+                p1p2_changed    :1,
+                point_available :1,
+                initialized     :1,
+                ready           :1,
+                error           :1,
+                service         :1,
+                unused          :1;
+    };
+} hpgl_status_flags;
+
+typedef union {
+    uint8_t value;
+    struct {
+        uint8_t enable_dtr   :1,
+                unused       :1,
+                monitor_mode :1,
+                monitor_on   :1,
+                block_mode   :1,
+                unassigned   :3;
+    };
+} hpgl_comm_flags;
+
 typedef struct {
     float chord_angle;
     float pen_thickness;
     bool plot_relative;
     uint8_t etxchar;
+    char term[3];
     uint8_t pattern_type;
     float pattern_length;
     bool use_alt_charset;
@@ -139,6 +182,7 @@ typedef struct {
     const char *const *charset_std;
     const char *const *charset_alt;
     user_point_t cr_loc;
+    hpgl_error_t first_error;
     hpgl_error_t last_error;
     uint8_t errmask;
     uint8_t alertmask;
@@ -146,7 +190,10 @@ typedef struct {
     // The following values are not changed on a reset to default values, ip_pad must be first!
     int32_t ip_pad[4];
     int32_t sc_pad[4];
+    int32_t esc_pad[8];
     user_point_t user_loc;
+    hpgl_status_flags flags;
+    hpgl_comm_flags comm;
 } hpgl_state_t;
 
 extern hpgl_state_t hpgl_state;

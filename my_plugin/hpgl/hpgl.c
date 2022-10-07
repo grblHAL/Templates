@@ -5,7 +5,7 @@
 #include "hpgl.h"
 #include "scale.h"
 
-#include "../grbl/stream.h"
+#include "../grbl/hal.h"
 #include "../grbl/nuts_bolts.h"
 
 extern const char *const charset0[256];
@@ -16,6 +16,7 @@ static const hpgl_state_t defaults = {
     .pen_thickness = .3f,
     .plot_relative = false,
     .etxchar = ASCII_ETX, // ^C
+    .term = ASCII_EOL,
     .pattern_type = 0,
     .pattern_length = 4.0f,
 #ifdef HPGL_A3
@@ -30,6 +31,7 @@ static const hpgl_state_t defaults = {
     .charset = &charset0[0],
     .charset_std = &charset0[0],
     .charset_alt = &charset173[0],
+    .first_error = ERR_None,
     .last_error = ERR_None,
     .errmask = 0,
     .alertmask = 223,
@@ -42,14 +44,17 @@ static const hpgl_state_t defaults = {
     .sc_pad[2] = 0,
     .sc_pad[3] = MAX_Y,
     .user_loc.x = 0.0f,
-    .user_loc.y = 0.0f
+    .user_loc.y = 0.0f,
+    .flags.initialized = On,
+    .flags.ready = On
 };
+
+extern pen_status_t get_pen_status (void);
 
 hpgl_state_t hpgl_state;
 hpgl_char_ptr hpgl_char;
 
 static hpgl_command_t hpgl_char_inp (char c, hpgl_point_t *target, uint8_t *lb);
-static hpgl_command_t hpgl_char_esc (char c, hpgl_point_t *target, uint8_t *lb);
 
 static char scratchpad[SCRATCHPAD_SIZE];
 
@@ -67,6 +72,8 @@ void hpgl_init (void)
     hpgl_set_error(hpgl_state.last_error);
 
     translate_init_sc();
+
+    hpgl_state.comm.enable_dtr = stream_get_flags(hal.stream).rts_handshake;
 }
 
 static void hpgl_defaults (void)
@@ -83,7 +90,11 @@ void hpgl_set_error (hpgl_error_t errnum)
     else
         hpgl_state.errmask |= (1 << errnum);
 
+    if(hpgl_state.first_error == ERR_None)
+        hpgl_state.first_error = errnum;
+
     hpgl_state.last_error = errnum;
+    hpgl_state.flags.error = hpgl_state.errmask != 0; // ??
 
     alert_led(!!(hpgl_state.errmask & hpgl_state.alertmask));
 }
@@ -169,14 +180,17 @@ hpgl_command_t hpgl_char_inp (char c, hpgl_point_t *target, uint8_t *lb)
     *lb = 0;
     target->x = target->y = -1;
 
-    if(c == ASCII_ESC) {
-        hpgl_char = hpgl_char_esc;
+    if(c == ASCII_ESC) // should never arrive here...
         return CMD_CONT;
-    }
 
     if(is_labeling) {
         if((is_labeling = c != hpgl_state.etxchar)) {
+
             *lb = c;
+
+            if(hpgl_state.comm.monitor_on && hpgl_state.comm.monitor_on)
+                hal.stream.write_char(c);
+
             return command;
         }
         return command = CMD_CONT;
@@ -194,6 +208,9 @@ hpgl_command_t hpgl_char_inp (char c, hpgl_point_t *target, uint8_t *lb)
     char t = c;
     bool terminated = false;
     hpgl_command_t cmd = CMD_CONT;
+
+    if(hpgl_state.comm.monitor_on && hpgl_state.comm.monitor_on)
+        hal.stream.write_char(c);
 
     if(command == CMD_CONT) {
         t = '\0';
@@ -476,8 +493,61 @@ hpgl_command_t hpgl_char_inp (char c, hpgl_point_t *target, uint8_t *lb)
                     hpgl_set_error(ERR_BadParam);
                 break;
 
+            case CMD_OA: // OA: Output Actual Position and Pen Status
+                {
+                    hpgl_point_t position;
+
+                    usertohpgl(hpgl_state.user_loc, &position);
+
+                    hal.stream.write(uitoa(position.x));
+                    hal.stream.write(",");
+                    hal.stream.write(uitoa(position.y));
+                    hal.stream.write(",");
+                    hal.stream.write(uitoa(get_pen_status() == Pen_Down));
+                    hal.stream.write(hpgl_state.term);
+                }
+                break;
+
+            case CMD_OE: // OE: Output Error
+                hal.stream.write(uitoa(hpgl_state.first_error));
+                hal.stream.write(hpgl_state.term);
+                hpgl_state.flags.error = Off;
+                break;
+
+            case CMD_OF: // OF: Output Factors
+                hal.stream.write("40,40");
+                hal.stream.write(hpgl_state.term);
+                break;
+
+            case CMD_OI: // OI: Output Identification
+                hal.stream.write(HPGL_DEVICE_IDENTIFICATION);
+                hal.stream.write(hpgl_state.term);
+                break;
+
+            case CMD_OO: // OO: Output Options
+                hal.stream.write("0,0,0,0,1,0,0,0"); // TODO: set second parameter to 1 if pen change is supported
+                hal.stream.write(hpgl_state.term);
+                break;
+
             case CMD_OP: // OP: Output Parameters P1 & P2
                 output_P1P2();
+                hpgl_state.flags.p1p2_changed = Off;
+                break;
+
+            case CMD_OS: // OE: Output Status
+                hpgl_state.flags.pen_down = get_pen_status() == Pen_Down;
+                hal.stream.write(uitoa(hpgl_state.flags.value));
+                hal.stream.write(hpgl_state.term);
+                hpgl_state.flags.initialized = Off;
+                break;
+
+            case CMD_OW: // OW: Output Window
+            case CMD_OH: // OH: Output Hard-clip Limits TODO: implement clip
+                hal.stream.write("0,0,");
+                hal.stream.write(uitoa(MAX_X));
+                hal.stream.write(",");
+                hal.stream.write(uitoa(MAX_Y));
+                hal.stream.write(hpgl_state.term);
                 break;
 
             case CMD_PA:
@@ -603,39 +673,6 @@ hpgl_command_t hpgl_char_inp (char c, hpgl_point_t *target, uint8_t *lb)
         if(terminated || !is_plotting || cmd == CMD_ERR)
             command = CMD_CONT;
     }
-
-    return cmd;
-}
-
-hpgl_command_t hpgl_char_esc (char c, hpgl_point_t *target, uint8_t *lb)
-{
-    static uint_fast8_t idx = 0;
-    static char scratch[SCRATCHPAD_SIZE];
-
-    hpgl_command_t cmd = CMD_CONT;
-
-    *lb = 0;
-    target->x = target->y = -1;
-
-    if(c == '.') {
-        idx = 0;
-    } else switch (c) {
-
-        case 'B':
-            cmd = CMD_BUFFER_SPACE;
-            break;
-
-        case 'L':
-            cmd = CMD_BUFFER_SIZE;
-            break;
-
-        default:
-            cmd = CMD_ERR;
-            break;
-    }
-
-    if(cmd != CMD_CONT)
-        hpgl_char = hpgl_char_inp;
 
     return cmd;
 }
