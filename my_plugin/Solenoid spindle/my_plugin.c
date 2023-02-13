@@ -27,7 +27,7 @@ static void solenoid_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Solenoid spindle v1.00]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:Solenoid spindle v1.01]" ASCII_EOL);
 }
 
 static void solenoid_reduce_current (sys_state_t state)
@@ -44,6 +44,22 @@ static void solenoid_set_state (spindle_state_t state, float rpm)
 
     pwm_spindle.set_state(state, power_down ? pwm_spindle.rpm_max : rpm);
 }
+
+#if GRBL_BUILD >= 20230201
+
+static bool solenoid_spindle_select (spindle_ptrs_t *spindle)
+{
+    if(spindle->type == SpindleType_PWM) {
+        memcpy(&pwm_spindle, spindle, sizeof(spindle_ptrs_t));
+        spindle->set_state = solenoid_set_state;
+        spindle->cap.laser = Off;
+        sys.mode = Mode_Standard;
+    }
+
+    return on_spindle_select == NULL || on_spindle_select(spindle);
+}
+
+#else
 
 static bool solenoid_spindle_select (spindle_id_t spindle_id)
 {
@@ -63,6 +79,8 @@ static bool solenoid_spindle_select (spindle_id_t spindle_id)
 
     return true;
 }
+
+#endif
 
 void my_plugin_init (void)
 {
