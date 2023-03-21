@@ -57,7 +57,7 @@
 #include "../grbl/motion_control.h"
 #include "../grbl/state_machine.h"
 
-#define VERSION "v0.06"
+#define VERSION "v0.07"
 #define DC_VALUES_MAX 12
 
 typedef enum {
@@ -214,7 +214,7 @@ static inline bool valid_target (hpgl_point_t target)
 
 bool moveto (hpgl_coord_t x, hpgl_coord_t y)
 {
-    plan_line_data_t plan_data = {0};
+    plan_line_data_t plan_data;
 
     if(x < hpgl_state.ip_pad[0] || y < hpgl_state.ip_pad[1])
         return false;
@@ -222,6 +222,7 @@ bool moveto (hpgl_coord_t x, hpgl_coord_t y)
     if(x > hpgl_state.ip_pad[2] || y > hpgl_state.ip_pad[3])
        return false;
 
+    plan_data_init(&plan_data);
     plan_data.feed_rate = feed_rate;
     plan_data.condition.rapid_motion = get_pen_status() == Pen_Up;
 
@@ -525,7 +526,7 @@ static void await_homed (sys_state_t state)
 static void go_home (void)
 {
     char cmd[LINE_BUFFER_SIZE] = "$H";
-    plan_line_data_t plan_data = {0};
+    plan_line_data_t plan_data;
 
     process = wait;
     hal.stream.write = hal.stream.write_all = stream_write_null;
@@ -533,6 +534,7 @@ static void go_home (void)
     pen_control(Pen_Up);
     system_execute_line(cmd);
 
+    plan_data_init(&plan_data);
     plan_data.condition.rapid_motion = On;
     target.values[X_AXIS] = settings.axis[X_AXIS].max_travel; //
     target.values[Y_AXIS] = 0.0f;
