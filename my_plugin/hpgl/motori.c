@@ -1061,7 +1061,7 @@ void hpgl_boot (sys_state_t state)
 }
 
 const sys_command_t hpgl_command_list[] = {
-    {"HPGL", true, hpgl_start}
+    {"HPGL", hpgl_start, { .noargs = On }}
 };
 
 static sys_commands_t hpgl_commands = {
