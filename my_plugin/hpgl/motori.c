@@ -52,10 +52,9 @@
 #include "hpgl.h"
 #include "motori.h"
 
-#include "../grbl/hal.h"
-#include "../grbl/protocol.h"
-#include "../grbl/motion_control.h"
-#include "../grbl/state_machine.h"
+#include "grbl/protocol.h"
+#include "grbl/motion_control.h"
+#include "grbl/state_machine.h"
 
 #define VERSION "v0.07"
 #define DC_VALUES_MAX 12

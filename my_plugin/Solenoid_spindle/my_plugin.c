@@ -53,7 +53,6 @@ static bool solenoid_spindle_select (spindle_ptrs_t *spindle)
         memcpy(&pwm_spindle, spindle, sizeof(spindle_ptrs_t));
         spindle->set_state = solenoid_set_state;
         spindle->cap.laser = Off;
-        sys.mode = Mode_Standard;
     }
 
     return on_spindle_select == NULL || on_spindle_select(spindle);

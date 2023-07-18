@@ -5,8 +5,8 @@
 #include "hpgl.h"
 #include "scale.h"
 
-#include "../grbl/hal.h"
-#include "../grbl/nuts_bolts.h"
+#include "grbl/hal.h"
+#include "grbl/nuts_bolts.h"
 
 extern const char *const charset0[256];
 extern const char *const charset173[256];
