@@ -16,7 +16,6 @@
 #define SOLENOID_HOLD_FACTOR 0.25f
 
 static uint32_t power_down = 0;
-
 static spindle_ptrs_t pwm_spindle;
 static on_report_options_ptr on_report_options;
 static on_execute_realtime_ptr on_execute_realtime;
@@ -27,25 +26,23 @@ static void solenoid_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Solenoid spindle v1.01]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:Solenoid spindle v1.03]" ASCII_EOL);
 }
 
 static void solenoid_reduce_current (sys_state_t state)
 {
     if(power_down && hal.get_elapsed_ticks() - power_down >= SOLENOID_HOLD_DELAY)
-        pwm_spindle.set_state(pwm_spindle.get_state(), pwm_spindle.rpm_max * SOLENOID_HOLD_FACTOR);
+        pwm_spindle.set_state(&pwm_spindle, pwm_spindle.get_state(&pwm_spindle), pwm_spindle.rpm_max * SOLENOID_HOLD_FACTOR);
 
     on_execute_realtime(state);
 }
 
-static void solenoid_set_state (spindle_state_t state, float rpm)
+static void solenoid_set_state (spindle_ptrs_t *spindle, spindle_state_t state, float rpm)
 {
     power_down = state.on && rpm > 0.0f ? hal.get_elapsed_ticks() : 0;
 
-    pwm_spindle.set_state(state, power_down ? pwm_spindle.rpm_max : rpm);
+    pwm_spindle.set_state(&pwm_spindle, state, power_down ? pwm_spindle.rpm_max : rpm);
 }
-
-#if GRBL_BUILD >= 20230201
 
 static bool solenoid_spindle_select (spindle_ptrs_t *spindle)
 {
@@ -57,29 +54,6 @@ static bool solenoid_spindle_select (spindle_ptrs_t *spindle)
 
     return on_spindle_select == NULL || on_spindle_select(spindle);
 }
-
-#else
-
-static bool solenoid_spindle_select (spindle_id_t spindle_id)
-{
-#if GRBL_BUILD >= 20221014
-    if(hal.spindle.type == SpindleType_PWM) {
-#else
-    if(hal.spindle.cap.laser) {
-#endif
-        memcpy(&pwm_spindle, &hal.spindle, sizeof(spindle_ptrs_t));
-        hal.spindle.set_state = solenoid_set_state;
-        hal.spindle.cap.laser = Off;
-        sys.mode = Mode_Standard;
-    }
-
-    if(on_spindle_select)
-        on_spindle_select(spindle_id);
-
-    return true;
-}
-
-#endif
 
 void my_plugin_init (void)
 {

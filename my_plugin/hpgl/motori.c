@@ -56,7 +56,7 @@
 #include "grbl/motion_control.h"
 #include "grbl/state_machine.h"
 
-#define VERSION "v0.07"
+#define VERSION "v0.08"
 #define DC_VALUES_MAX 12
 
 typedef enum {
@@ -183,7 +183,9 @@ void pen_control (pen_status_t state)
 
         if (state == Pen_Down) {
             DELAY_MS(PEN_DOWN_DELAY);
-#if GRBL_BUILD >= 20230201
+#if GRBL_BUILD >= 20231120
+            spindle_get(0)->set_state(spindle_get(0), on, 1000.0f);
+#elif GRBL_BUILD >= 20230201
             spindle_get(0)->set_state(on, 1000.0f);
 #else
             hal.spindle.set_state(on, 1000.0f);
@@ -191,7 +193,9 @@ void pen_control (pen_status_t state)
             pen_status = Pen_Down;
             last_action = hal.get_elapsed_ticks();
         } else {
-#if GRBL_BUILD >= 20230201
+#if GRBL_BUILD >= 20231120
+            spindle_get(0)->set_state(spindle_get(0), off, 0.0f);
+#elif GRBL_BUILD >= 20230201
             spindle_get(0)->set_state(off, 0.0f);
 #else
             hal.spindle.set_state(off, 0.0f);
