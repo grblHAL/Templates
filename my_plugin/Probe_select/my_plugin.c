@@ -59,7 +59,7 @@ static on_report_options_ptr on_report_options;
 // The default setting number is Setting_UserDefined_0 ($450), this can be changed by
 // modifying the RELAY_PLUGIN_SETTING symbol below.
 
-#if defined(GRBL_BUILD) && GRBL_BUILD >= 20211117
+#if defined(GRBL_BUILD) && GRBL_BUILD >= 20240125
 
 #include "grbl/nvs_buffer.h"
 
@@ -198,12 +198,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Probe select v0.04]" ASCII_EOL);
-}
-
-static void warning_msg (uint_fast16_t state)
-{
-    report_message("Probe select plugin failed to initialize!", Message_Warning);
+        hal.stream.write("[PLUGIN:Probe select v0.05]" ASCII_EOL);
 }
 
 #ifdef RELAY_PLUGIN_ADVANCED
@@ -276,7 +271,7 @@ static void plugin_settings_load (void)
         grbl.on_probe_fixture = probe_fixture;
 
     } else
-        protocol_enqueue_rt_command(warning_no_port);
+        protocol_enqueue_foreground_task(report_warning, "Relay plugin: configured port number is not available");
 }
 
 // Settings descriptor used by the core when interacting with this plugin.
@@ -338,7 +333,7 @@ void my_plugin_init (void)
     }
 
     if(!ok)
-        protocol_enqueue_rt_command(warning_msg);
+        protocol_enqueue_foreground_task(report_warning, "Probe select plugin failed to initialize!");
 }
 
 #else
@@ -368,7 +363,7 @@ void my_plugin_init (void)
         grbl.on_probe_fixture = probe_fixture;
 
     } else
-        protocol_enqueue_rt_command(warning_msg);
+        protocol_enqueue_foreground_task(report_warning, "Probe select plugin failed to initialize!");
 }
 
 #endif

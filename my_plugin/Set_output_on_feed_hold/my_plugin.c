@@ -39,15 +39,10 @@ static void onReportOptions (bool newopt)
         hal.stream.write("[PLUGIN:MY PLUGIN Template 2]" ASCII_EOL);
 }
 
-static void output_warning (uint_fast16_t state)
-{
-    report_message("An output port is required for my_plugin!", Message_Warning);
-}
-
 void my_plugin_init (void)
 {
     if(hal.port.num_digital_out == 0)                   // This plugin requires one digital output port,
-        protocol_enqueue_rt_command(output_warning);    // complain if not available.
+        protocol_enqueue_foreground_task(report_warning, "An output port is required for my_plugin!",);    // complain if not available.
 
     else {
         port = hal.port.num_digital_out - 1;            // Claim the

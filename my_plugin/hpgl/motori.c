@@ -56,7 +56,7 @@
 #include "grbl/motion_control.h"
 #include "grbl/state_machine.h"
 
-#define VERSION "v0.08"
+#define VERSION "v0.09"
 #define DC_VALUES_MAX 12
 
 typedef enum {
@@ -1058,7 +1058,7 @@ status_code_t hpgl_start (sys_state_t state, char *args)
     return Status_OK;
 }
 
-void hpgl_boot (sys_state_t state)
+void hpgl_boot (void *data)
 {
     hpgl_start(state, NULL);
 }
@@ -1072,22 +1072,16 @@ static sys_commands_t hpgl_commands = {
     .commands = hpgl_command_list
 };
 
-sys_commands_t *hpgl_get_commands()
-{
-    return &hpgl_commands;
-}
-
 void my_plugin_init (void)
 {
     on_report_options = grbl.on_report_options;
     grbl.on_report_options = report_options;
 
-    hpgl_commands.on_get_commands = grbl.on_get_commands;
-    grbl.on_get_commands = hpgl_get_commands;
+    system_register_commands(&hpgl_commands);
 
     stream.write = NULL;
 #ifdef HPGL_BOOT
-    protocol_enqueue_rt_command(hpgl_boot);
+    protocol_enqueue_foreground_task(hpgl_boot, NULL);
     memcpy(&stream, &hal.stream, sizeof(io_stream_t));
     hal.stream.write = hal.stream.write_all = stream_write_null;
 #endif

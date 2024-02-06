@@ -111,11 +111,6 @@ static void on_driver_reset (void)
         check_power_restored();
 }
 
-static void no_ports (uint_fast16_t state)
-{
-    report_message("Motor supply monitor plugin failed to claim needed port!", Message_Warning);
-}
-
 // Wait for idle state (alarm cleared) before issuing command.
 static void await_idle (sys_state_t state)
 {
@@ -124,7 +119,7 @@ static void await_idle (sys_state_t state)
 }
 
 // Raise motor fault alarm.
-static void raise_power_alarm (uint_fast16_t state)
+static void raise_power_alarm (void *data)
 {
     if(power_state == Power_Alarm)
         system_raise_alarm(Alarm_MotorFault);
@@ -138,7 +133,7 @@ static void on_power_change (uint8_t port, bool state)
 {
     if(!state) {
         if(power_state == Power_On) {
-            protocol_enqueue_rt_command(raise_power_alarm);
+            protocol_enqueue_foreground_task(raise_power_alarm, NULL);
             power_state = Power_Alarm;
         }
     } else if(on_state_change == NULL && power_state == Power_Lost) {
@@ -177,7 +172,7 @@ static void power_settings_load (void)
         hal.settings_changed = on_settings_changed;
     } else {
         port = 0xFF;
-        protocol_enqueue_rt_command(no_ports);
+        protocol_enqueue_foreground_task(report_warning, "Motor supply monitor plugin failed to claim needed port!");
     }
 }
 
@@ -200,12 +195,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Motor supply monitor v0.02]" ASCII_EOL);
-}
-
-static void warning_msg (uint_fast16_t state)
-{
-    report_message("Motor supply monitor plugin failed to initialize!", Message_Warning);
+        hal.stream.write("[PLUGIN:Motor supply monitor v0.03]" ASCII_EOL);
 }
 
 // A call my_plugin_init will be issued automatically at startup.
@@ -242,5 +232,5 @@ void my_plugin_init (void)
         driver_reset = hal.driver_reset;
         hal.driver_reset = on_driver_reset;
     } else
-        protocol_enqueue_rt_command(warning_msg);
+        protocol_enqueue_foreground_task(report_warning, "Motor supply monitor plugin failed to claim needed port!");
 }

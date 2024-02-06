@@ -33,10 +33,6 @@
 #include "grbl/state_machine.h"
 #include "grbl/platform.h"
 
-#ifndef GRBL_BUILD
-#error "grblHAL build 20211117 or later is required for this plugin!"
-#endif
-
 #if N_MACROS > 4
 #undef N_MACROS
 #define N_MACROS 4
@@ -116,9 +112,9 @@ static status_code_t trap_status_report (status_code_t status_code)
 }
 
 // Actual start of macro execution.
-static void run_macro (uint_fast16_t state)
+static void run_macro (void *data)
 {
-    if(state == STATE_IDLE && hal.stream.read != get_macro_char) {
+    if(state_get() == STATE_IDLE && hal.stream.read != get_macro_char) {
         stream_read = hal.stream.read;                      // Redirect input stream to read from the macro instead of
         hal.stream.read = get_macro_char;                   // the active stream. This ensures that input streams are not mingled.
         grbl.report.status_message = trap_status_report;    // Add trap for status messages so we can terminate on errors.
@@ -142,7 +138,7 @@ ISR_CODE static void execute_macro (uint8_t irq_port, bool is_high)
         is_executing = true;
         command = plugin_settings.macro[idx].data;
         if(!(*command == '\0' || *command == 0xFF))     // If valid command
-            protocol_enqueue_rt_command(run_macro);     // register run_macro function to be called from foreground process.
+            protocol_enqueue_foreground_task(run_macro, NULL);     // register run_macro function to be called from foreground process.
     }
 }
 
@@ -255,11 +251,6 @@ static void macro_settings_restore (void)
     hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&plugin_settings, sizeof(macro_settings_t), true);
 }
 
-static void no_ports (uint_fast16_t state)
-{
-    report_message("Macro plugin failed to claim all needed ports!", Message_Warning);
-}
-
 // Load our settings from non volatile storage (NVS).
 // If load fails restore to default values.
 static void macro_settings_load (void)
@@ -296,7 +287,7 @@ static void macro_settings_load (void)
     } while(idx);
 
     if(n_ok < N_MACROS)
-        protocol_enqueue_rt_command(no_ports);
+        protocol_enqueue_foreground_task(report_warning, "Macro plugin failed to claim all needed ports!");
 }
 
 // Settings descriptor used by the core when interacting with this plugin.
@@ -320,12 +311,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Macro plugin v0.02]" ASCII_EOL);
-}
-
-static void warning_msg (uint_fast16_t state)
-{
-    report_message("Macro plugin failed to initialize!", Message_Warning);
+        hal.stream.write("[PLUGIN:Macro plugin v0.03]" ASCII_EOL);
 }
 
 // A call my_plugin_init will be issued automatically at startup.
@@ -366,5 +352,5 @@ void my_plugin_init (void)
         driver_reset = hal.driver_reset;
         hal.driver_reset = plugin_reset;
     } else
-        protocol_enqueue_rt_command(warning_msg);
+        protocol_enqueue_foreground_task(report_warning, "Macro plugin failed to initialize!");
 }

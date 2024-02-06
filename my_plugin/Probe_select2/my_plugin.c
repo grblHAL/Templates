@@ -240,12 +240,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Probe select 2 v0.01]" ASCII_EOL);
-}
-
-static void warning_msg (uint_fast16_t state)
-{
-    report_message("Probe select plugin failed to initialize!", Message_Warning);
+        hal.stream.write("[PLUGIN:Probe select 2 v0.02]" ASCII_EOL);
 }
 
 // Add info about our settings for $help and enumerations.
@@ -282,11 +277,6 @@ static void plugin_settings_restore (void)
     probe2_settings.overtravel_port = probe2_settings.probe_port >= 1 ? probe2_settings.probe_port - 1 : 0;
 
     hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&probe2_settings, sizeof(probe2_settings_t), true);
-}
-
-static void warning_no_port (uint_fast16_t state)
-{
-    report_message("Probe select plugin: configured port number is not available", Message_Warning);
 }
 
 // Load our settings from non volatile storage (NVS).
@@ -337,7 +327,7 @@ static void plugin_settings_load (void)
         }
 #endif
     } else
-        protocol_enqueue_rt_command(warning_no_port);
+        protocol_enqueue_foreground_task(report_warning, "Probe select plugin: configured port number is not available");
 }
 
 // Settings descriptor used by the core when interacting with this plugin.
@@ -402,5 +392,5 @@ void my_plugin_init (void)
     }
 
     if(!ok)
-        protocol_enqueue_rt_command(warning_msg);
+        protocol_enqueue_foreground_task(report_warning, "Probe select plugin failed to initialize!");
 }
