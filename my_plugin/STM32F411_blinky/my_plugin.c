@@ -9,9 +9,9 @@
 */
 
 #include "driver.h"
+#include "grbl/task.h"
 
 static on_report_options_ptr on_report_options;
-static on_execute_realtime_ptr on_execute_realtime;
 
 // Add info about our plugin to the $I report.
 static void on_report_my_options (bool newopt)
@@ -19,24 +19,20 @@ static void on_report_my_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Blink LED v1.00]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:Blink LED v2.00]" ASCII_EOL);
 }
 
-static void blink_led (sys_state_t state)
+static void blink_led (void *data)
 {
     static bool led_on = false;
-    static uint32_t ms = 0;
 
-    if(hal.get_elapsed_ticks() >= ms) {
-        ms = hal.get_elapsed_ticks() + 500; //ms
-        led_on = !led_on;
-        if(led_on)
-            GPIOC->ODR |= GPIO_PIN_13;
-        else
-            GPIOC->ODR &= ~GPIO_PIN_13;
-    }
+    if((led_on = !led_on))
+        GPIOC->ODR |= GPIO_PIN_13;
+    else
+        GPIOC->ODR &= ~GPIO_PIN_13;
 
-    on_execute_realtime(state);
+    // Reschedule the blink LED function
+    task_add_delayed(blink_led, NULL, 500);
 }
 
 void my_plugin_init (void)
@@ -45,9 +41,8 @@ void my_plugin_init (void)
     on_report_options = grbl.on_report_options;
     grbl.on_report_options = on_report_my_options;
 
-    // Add blink LED function to grblHAL foreground process
-    on_execute_realtime = grbl.on_execute_realtime;
-    grbl.on_execute_realtime = blink_led;
+    // Schedule blink LED function to be run from the grblHAL foreground process
+    task_add_delayed(blink_led, NULL, 500); // 500 ms
 
     // Enable PC13 as output
     GPIO_InitTypeDef GPIO_InitStructure = {

@@ -151,13 +151,8 @@ static void mcode_execute (uint_fast16_t state, parser_block_t *gc_block)
 
                  if(hal.rgb.set_intensity)
                      hal.rgb.set_intensity((uint8_t)gc_block->values.p);
-                 else {
-                     uint8_t intensity = (uint8_t)gc_block->values.p;
-                     new_color.R = (uint8_t)(((color.R + 1) * intensity) >> 8);
-                     new_color.G = (uint8_t)(((color.G + 1) * intensity) >> 8);
-                     new_color.B = (uint8_t)(((color.B + 1) * intensity) >> 8);
-                     new_color.W = (uint8_t)(((color.W + 1) * intensity) >> 8);
-                 }
+                 else
+                     new_color = rgb_set_intensity(color, (uint8_t)gc_block->values.p);
              }
 
              if(set_colors || (gc_block->words.p && hal.rgb.set_intensity == NULL)) {
