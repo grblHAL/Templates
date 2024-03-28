@@ -25,7 +25,7 @@
 #include "driver.h"
 
 #if N_AXIS > 4 || AXIS_REMAP_ABC2UVW || LATHE_UVW_OPTION
-#error "RGB plugin is not supported in this configuration!"
+//#error "RGB plugin is not supported in this configuration!"
 #else
 
 #include <math.h>
@@ -81,8 +81,13 @@ static status_code_t mcode_validate (parser_block_t *gc_block, parameter_words_t
             if(!(gc_block->words.r || gc_block->words.u || gc_block->words.b || gc_block->words.w || gc_block->words.p))
                 return Status_GcodeValueWordMissing;
 
-            if(gc_block->words.i && hal.rgb.num_devices > 1) {
-                if(gc_block->values.ijk[0] < -0.0f || gc_block->values.ijk[0] > (float)(hal.rgb.num_devices - 1))
+            if(gc_block->words.s && !(gc_block->values.s == 0.0f || (gc_block->values.s == 1.0f && !!hal.rgb1.out)))
+                return Status_GcodeValueOutOfRange;
+
+            rgb_ptr_t *strip = gc_block->words.s && gc_block->values.s == 1.0f ? &hal.rgb1 : &hal.rgb0;
+
+            if(gc_block->words.i && strip->num_devices > 1) {
+                if(gc_block->values.ijk[0] < -0.0f || gc_block->values.ijk[0] > (float)(strip->num_devices - 1))
                     state = Status_GcodeValueOutOfRange;
                 else
                     gc_block->words.i = Off;
@@ -108,77 +113,81 @@ static void mcode_execute (uint_fast16_t state, parser_block_t *gc_block)
 
     bool handled = true;
 
-    if(state != STATE_CHECK_MODE)
-      switch(gc_block->user_mcode) {
+    if(state != STATE_CHECK_MODE) {
 
-         case RGB_WriteLEDs:;
+        rgb_ptr_t *strip = gc_block->words.s && gc_block->values.s == 1.0f ? &hal.rgb1 : &hal.rgb0;
 
-             bool set_colors;
-             uint16_t device = gc_block->words.i ? (uint16_t)gc_block->values.ijk[0] : 0;
-             rgb_color_mask_t mask = { .value = 0xFF };
-             rgb_color_t new_color;
+        switch(gc_block->user_mcode) {
 
-             if((set_colors = gc_block->words.r || gc_block->words.u || gc_block->words.b || gc_block->words.w)) {
-                 if(!gc_block->words.k)
-                     color.value = 0;
-                 else {
-                     mask.R = gc_block->words.r;
-                     mask.G = gc_block->words.u;
-                     mask.B = gc_block->words.b;
-                     mask.W = gc_block->words.w;
-                 }
-             }
+             case RGB_WriteLEDs:;
 
-             if(gc_block->words.w) {
-                 if(hal.rgb.cap.W)
-                     color.W = (uint8_t)(gc_block->words.p ? gc_block->values.p : gc_block->values.w);
-                 else
-                     color.R = color.G = color.B = gc_block->values.w;
-             }
+                 bool set_colors;
+                 uint16_t device = gc_block->words.i ? (uint16_t)gc_block->values.ijk[0] : 0;
+                 rgb_color_mask_t mask = { .value = 0xFF };
+                 rgb_color_t new_color;
 
-             if(!gc_block->words.w || hal.rgb.cap.W) {
-                 if(gc_block->words.r)
-                     color.R = (uint8_t)gc_block->values.r;
-                 if(gc_block->words.u)
-                     color.G = (uint8_t)gc_block->values.u;
-                 if(gc_block->words.b)
-                     color.B = (uint8_t)gc_block->values.b;
-             }
-
-             new_color.value = color.value;
-
-             if(gc_block->words.p) {
-
-                 if(hal.rgb.set_intensity)
-                     hal.rgb.set_intensity((uint8_t)gc_block->values.p);
-                 else
-                     new_color = rgb_set_intensity(color, (uint8_t)gc_block->values.p);
-             }
-
-             if(set_colors || (gc_block->words.p && hal.rgb.set_intensity == NULL)) {
-                 if(gc_block->words.s && hal.rgb.num_devices > 1) {
-                     for(device = 0; device < hal.rgb.num_devices; device++) {
-                         if(hal.rgb.out_masked)
-                             hal.rgb.out_masked(device, new_color, mask);
-                         else
-                             hal.rgb.out(device, new_color);
+                 if((set_colors = gc_block->words.r || gc_block->words.u || gc_block->words.b || gc_block->words.w)) {
+                     if(!gc_block->words.k)
+                         color.value = 0;
+                     else {
+                         mask.R = gc_block->words.r;
+                         mask.G = gc_block->words.u;
+                         mask.B = gc_block->words.b;
+                         mask.W = gc_block->words.w;
                      }
-                 } else {
-                     if(hal.rgb.out_masked)
-                         hal.rgb.out_masked(device, new_color, mask);
-                     else
-                         hal.rgb.out(device, new_color);
                  }
-             }
 
-             if(set_colors && hal.rgb.num_devices > 1 && hal.rgb.write)
-                 hal.rgb.write();
+                 if(gc_block->words.w) {
+                     if(strip->cap.W)
+                         color.W = (uint8_t)(gc_block->words.p ? gc_block->values.p : gc_block->values.w);
+                     else
+                         color.R = color.G = color.B = gc_block->values.w;
+                 }
 
-             break;
+                 if(!gc_block->words.w || strip->cap.W) {
+                     if(gc_block->words.r)
+                         color.R = (uint8_t)gc_block->values.r;
+                     if(gc_block->words.u)
+                         color.G = (uint8_t)gc_block->values.u;
+                     if(gc_block->words.b)
+                         color.B = (uint8_t)gc_block->values.b;
+                 }
 
-        default:
-            handled = false;
-            break;
+                 new_color.value = color.value;
+
+                 if(gc_block->words.p) {
+
+                     if(strip->set_intensity)
+                         strip->set_intensity((uint8_t)gc_block->values.p);
+                     else
+                         new_color = rgb_set_intensity(color, (uint8_t)gc_block->values.p);
+                 }
+
+                 if(set_colors || (gc_block->words.p && strip->set_intensity == NULL)) {
+                     if(!gc_block->words.i && strip->num_devices > 1) {
+                         for(device = 0; device < strip->num_devices; device++) {
+                             if(strip->out_masked)
+                                 strip->out_masked(device, new_color, mask);
+                             else
+                                 strip->out(device, new_color);
+                         }
+                     } else {
+                         if(strip->out_masked)
+                             strip->out_masked(device, new_color, mask);
+                         else
+                             strip->out(device, new_color);
+                     }
+                 }
+
+                 if(set_colors && strip->num_devices > 1 && strip->write)
+                     strip->write();
+
+                 break;
+
+            default:
+                handled = false;
+                break;
+        }
     }
 
     if(!handled && user_mcode.execute)
@@ -192,7 +201,12 @@ static bool is_setting_available (const setting_detail_t *setting)
     switch(setting->id) {
 
         case Setting_RGB_StripLengt0:
-            available = !!hal.rgb.out;
+            available = is_neopixels;
+            break;
+
+        case Setting_RGB_StripLengt1:
+            available = rgb_is_neopixels(&hal.rgb1);
+            break;
 
         default:
             break;
@@ -207,14 +221,14 @@ static const setting_group_detail_t rgb_groups[] = {
 
 static const setting_detail_t rgb_settings[] = {
     { Setting_RGB_StripLengt0, Group_AuxPorts, "Neopixel strip 1 length", NULL, Format_Int8, "##0", NULL, "255", Setting_NonCore, &settings.rgb_strip0_length, NULL, is_setting_available },
-    { Setting_RGB_StripLengt1, Group_AuxPorts, "Neopixel strip 2 length", NULL, Format_Int8, "##0", NULL, "255", Setting_NonCore, &settings.rgb_strip1_length, NULL, is_setting_available },
+    { Setting_RGB_StripLengt1, Group_AuxPorts, "Neopixel strip 2 length", NULL, Format_Int8, "##0", NULL, "255", Setting_NonCore, &settings.rgb_strip1_length, NULL, is_setting_available }
 };
 
 #ifndef NO_SETTINGS_DESCRIPTIONS
 
 static const setting_descr_t rgb_settings_descr[] = {
     { Setting_RGB_StripLengt0, "Number of LEDS in strip 1." },
-    { Setting_RGB_StripLengt1, "Number of LEDS in strip 2." },
+    { Setting_RGB_StripLengt1, "Number of LEDS in strip 2." }
 };
 
 #endif
@@ -242,12 +256,12 @@ static void onReportOptions (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:RGB LED (M150) v0.02]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:RGB LED (M150) v0.03]" ASCII_EOL);
 }
 
 void my_plugin_init (void)
 {
-    if(hal.rgb.out) {
+    if(hal.rgb0.out) {
 
         memcpy(&user_mcode, &hal.user_mcode, sizeof(user_mcode_ptrs_t));
 
@@ -258,7 +272,7 @@ void my_plugin_init (void)
         on_report_options = grbl.on_report_options;
         grbl.on_report_options = onReportOptions;
 
-        if((is_neopixels = hal.rgb.cap.R == 255 && hal.rgb.cap.G == 255 && hal.rgb.cap.B == 255))
+        if((is_neopixels = rgb_is_neopixels(&hal.rgb0)))
             settings_register(&setting_details);
     }
 }
