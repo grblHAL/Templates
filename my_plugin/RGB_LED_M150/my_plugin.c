@@ -6,26 +6,28 @@
 
   Public domain.
 
-  Usage: M150 [B<intensity>] [I<pixel>] [K] [P<intensity>] [R<intensity>] [S0] [U<intensity>] [W<intensity>]
+  Usage: M150 [B<intensity>] [I<pixel>] [K] [P<intensity>] [R<intensity>] [S<strip>] [U<intensity>] [W<intensity>]
 
     B<intensity> - blue component, 0 - 255
-    I<pixel>     - NeoPixel index, available if number of pixels > 1
+    I<pixel>     - NeoPixel index, available if number of pixels > 1. If not given all LEDs in strip are set to the same color.
     K            - keep unspecified values
     P<intensity> - brightness, 0 - 255
-    S0           - write values to all LEDs in strip
+    S<strip>     - write values to LEDs in strip, 0 - 1
     R<intensity> - red component, 0 - 255
-    U<intensity> - red component, 0 - 255
+    U<intensity> - green component, 0 - 255
+    W<intensity> - white component if white LED available else sets RGB LEDS to same intensity, 0 - 255
 
   https://marlinfw.org/docs/gcode/M150.html
 
-  $536 - length of strip.
+  $536 - length of strip 0.
+  $537 - length of strip 1.
 
 */
 
 #include "driver.h"
 
 #if N_AXIS > 4 || AXIS_REMAP_ABC2UVW || LATHE_UVW_OPTION
-//#error "RGB plugin is not supported in this configuration!"
+#error "RGB plugin is not supported in this configuration!"
 #else
 
 #include <math.h>
