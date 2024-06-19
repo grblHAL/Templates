@@ -51,15 +51,15 @@ static uint8_t relay_port;
 static bool relay_on = false;
 static probe_mode_t probe_mode = ProbeMode_AtG59_3; // Default mode
 static driver_reset_ptr driver_reset;
+static on_probe_toolsetter_ptr on_probe_toolsetter;
 static user_mcode_ptrs_t user_mcode;
 static on_report_options_ptr on_report_options;
+
 
 // Later versions of grblHAL and the driver may allow configuring which aux port to use for relay control.
 // If possible the plugin adds a $setting and delay claiming the port until settings has been loaded.
 // The default setting number is Setting_UserDefined_0 ($450), this can be changed by
 // modifying the RELAY_PLUGIN_SETTING symbol below.
-
-#if defined(GRBL_BUILD) && GRBL_BUILD >= 20240125
 
 #include "grbl/nvs_buffer.h"
 
@@ -76,8 +76,6 @@ typedef struct {
 static nvs_address_t nvs_address;
 static on_report_options_ptr on_report_options;
 static relay_settings_t relay_settings;
-
-#endif
 
 static user_mcode_t mcode_check (user_mcode_t mcode)
 {
@@ -149,8 +147,11 @@ static void mcode_execute (uint_fast16_t state, parser_block_t *gc_block)
 
 // When called from "normal" probing tool is always NULL, when called from within
 // a tool change sequence (M6) then tool is a pointer to the selected tool.
-bool probe_fixture (tool_data_t *tool, bool at_g59_3, bool on)
+bool probeToolSetter (tool_data_t *tool, coord_data_t *position, bool at_g59_3, bool on)
 {
+    if(on_probe_toolsetter)
+        on_probe_toolsetter(tool, position, at_g59_3, on);
+
     if(on) switch(probe_mode) {
 
         case ProbeMode_AtG59_3:
@@ -198,7 +199,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Probe select v0.05]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:Probe select v0.06]" ASCII_EOL);
 }
 
 #ifdef RELAY_PLUGIN_ADVANCED
@@ -239,11 +240,6 @@ static void plugin_settings_restore (void)
     hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&relay_settings, sizeof(relay_settings_t), true);
 }
 
-static void warning_no_port (uint_fast16_t state)
-{
-    report_message("Relay plugin: configured port number is not available", Message_Warning);
-}
-
 // Load our settings from non volatile storage (NVS).
 // If load fails restore to default values.
 static void plugin_settings_load (void)
@@ -268,7 +264,8 @@ static void plugin_settings_load (void)
         driver_reset = hal.driver_reset;
         hal.driver_reset = probe_reset;
 
-        grbl.on_probe_fixture = probe_fixture;
+        on_probe_toolsetter = grbl.on_probe_toolsetter;
+        grbl.on_probe_toolsetter = probeToolSetter;
 
     } else
         protocol_enqueue_foreground_task(report_warning, "Relay plugin: configured port number is not available");
@@ -317,8 +314,8 @@ void my_plugin_init (void)
             on_report_options = grbl.on_report_options;
             grbl.on_report_options = report_options;
 
-            grbl.on_probe_fixture = probe_fixture;
-
+            on_probe_toolsetter = grbl.on_probe_toolsetter;
+            grbl.on_probe_toolsetter = probeToolSetter;
         }
 
     } else if((ok = (n_ports = ioports_available(Port_Digital, Port_Output)) > 0 && (nvs_address = nvs_alloc(sizeof(relay_settings_t))))) {

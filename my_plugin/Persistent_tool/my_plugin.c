@@ -16,8 +16,8 @@
 #include "grbl/nuts_bolts.h"
 #include "grbl/protocol.h"
 
-#if GRBL_BUILD < 20230822
-#error Persistent tool plugin requires build 20230822 or later!
+#if GRBL_BUILD < 20231210
+#error Persistent tool plugin requires build 20231210 or later!
 #endif
 
 typedef struct {
@@ -72,7 +72,7 @@ static void onReportOptions (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Persistent tool v0.01]" ASCII_EOL);
+        hal.stream.write("[PLUGIN:Persistent tool v0.02]" ASCII_EOL);
 }
 
 static void onToolChanged (tool_data_t *tool)
@@ -94,7 +94,7 @@ static void onParserInit (parser_state_t *gc_state)
     if(sys.cold_start && my_settings.keep_tool) {
       #if N_TOOLS
         if(my_settings.tool_id <= N_TOOLS)
-            gc_state->tool = &tool_table[my_settings.tool_id];
+            gc_state->tool = &grbl.tool_table.tool[my_settings.tool_id];
       #else
         gc_state->tool->tool_id = my_settings.tool_id;
       #endif

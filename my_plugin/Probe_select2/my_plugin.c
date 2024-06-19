@@ -55,6 +55,7 @@ static probe_mode_t probe_mode = ProbeMode_AtG59_3; // Default mode
 static driver_reset_ptr driver_reset;
 static probe_configure_ptr probe_configure;
 static probe_get_state_ptr probe_get_state;
+static on_probe_toolsetter_ptr on_probe_toolsetter;
 static user_mcode_ptrs_t user_mcode;
 static on_report_options_ptr on_report_options;
 static driver_reset_ptr driver_reset;
@@ -150,8 +151,11 @@ static void mcode_execute (uint_fast16_t state, parser_block_t *gc_block)
 
 // When called from "normal" probing tool is always NULL, when called from within
 // a tool change sequence (M6) then tool is a pointer to the selected tool.
-bool probe_fixture (tool_data_t *tool, bool at_g59_3, bool on)
+bool probeToolSetter (tool_data_t *tool, coord_data_t *position, bool at_g59_3, bool on)
 {
+    if(on_probe_toolsetter)
+        on_probe_toolsetter(tool, position, at_g59_3, on);
+
     if(on) switch(probe_mode) {
 
         case ProbeMode_AtG59_3:
@@ -310,7 +314,8 @@ static void plugin_settings_load (void)
         probe_get_state = hal.probe.get_state;
         hal.probe.get_state = probeGetState;
 
-        grbl.on_probe_fixture = probe_fixture;
+        on_probe_toolsetter = grbl.on_probe_toolsetter;
+        grbl.on_probe_toolsetter = probeToolSetter;
 
 #if PROBE2_OVERTRAVEL
         overtravel_port = probe2_settings.overtravel_port;
@@ -377,7 +382,8 @@ void my_plugin_init (void)
             probe_get_state = hal.probe.get_state;
             hal.probe.get_state = probeGetState;
 
-            grbl.on_probe_fixture = probe_fixture;
+            on_probe_toolsetter = grbl.on_probe_toolsetter;
+            grbl.on_probe_toolsetter = probeToolSetter;
         }
 
     } else if((ok = (n_ports = ioports_available(Port_Digital, Port_Input)) > 0 && (nvs_address = nvs_alloc(sizeof(probe2_settings_t))))) {
