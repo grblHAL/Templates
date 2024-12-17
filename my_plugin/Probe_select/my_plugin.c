@@ -77,14 +77,14 @@ static nvs_address_t nvs_address;
 static on_report_options_ptr on_report_options;
 static relay_settings_t relay_settings;
 
-static user_mcode_t mcode_check (user_mcode_t mcode)
+static user_mcode_type_t mcode_check (user_mcode_t mcode)
 {
     return mcode == (user_mcode_t)401 || mcode == (user_mcode_t)402
-                     ? mcode
-                     : (user_mcode.check ? user_mcode.check(mcode) : UserMCode_Ignore);
+                     ? UserMCode_Normal
+                     : (user_mcode.check ? user_mcode.check(mcode) : UserMCode_Unsupported);
 }
 
-static status_code_t mcode_validate (parser_block_t *gc_block, parameter_words_t *deprecated)
+static status_code_t mcode_validate (parser_block_t *gc_block)
 {
     status_code_t state = Status_OK;
 
@@ -110,7 +110,7 @@ static status_code_t mcode_validate (parser_block_t *gc_block, parameter_words_t
             break;
     }
 
-    return state == Status_Unhandled && user_mcode.validate ? user_mcode.validate(gc_block, deprecated) : state;
+    return state == Status_Unhandled && user_mcode.validate ? user_mcode.validate(gc_block) : state;
 }
 
 static void mcode_execute (uint_fast16_t state, parser_block_t *gc_block)
@@ -199,7 +199,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Probe select v0.06]" ASCII_EOL);
+        report_plugin("Probe select", "0.07");
 }
 
 #ifdef RELAY_PLUGIN_ADVANCED
@@ -255,11 +255,11 @@ static void plugin_settings_load (void)
 
     if(ioport_claim(Port_Digital, Port_Output, &relay_port, "Probe relay")) {
 
-        memcpy(&user_mcode, &hal.user_mcode, sizeof(user_mcode_ptrs_t));
+        memcpy(&user_mcode, &grbl.user_mcode, sizeof(user_mcode_ptrs_t));
 
-        hal.user_mcode.check = mcode_check;
-        hal.user_mcode.validate = mcode_validate;
-        hal.user_mcode.execute = mcode_execute;
+        grbl.user_mcode.check = mcode_check;
+        grbl.user_mcode.validate = mcode_validate;
+        grbl.user_mcode.execute = mcode_execute;
 
         driver_reset = hal.driver_reset;
         hal.driver_reset = probe_reset;

@@ -7,9 +7,9 @@
   Public domain.
 
   Usage:
-    M17[X][Y][Z]
-    M18[X][Y][Z][S<delay>]
-    M18[X][Y][Z][S<delay>]
+    M17[X][Y][Z] - enable steppers
+    M18[X][Y][Z][S<delay>] - disable steppers
+    M84[X][Y][Z][S<delay>] - disable steppers
 
   If no axis words are specified all axes are enabled/disabled
   If no delay is specified disable is immediate, else delay is number of seconds.
@@ -25,39 +25,40 @@
 #include "grbl/hal.h"
 #include "grbl/protocol.h"
 
-static uint32_t delay_until = 0;
+static bool await_disable = false;
 static user_mcode_ptrs_t user_mcode;
 static on_report_options_ptr on_report_options;
-static stepper_enable_ptr on_stepper_enable;
+static stepper_enable_ptr stepper_enable;
 static axes_signals_t stepper_enabled = {0};
-static on_execute_realtime_ptr on_execute_realtime;
 
-static void stepper_enable (axes_signals_t enable)
+static void disable_steppers (void *data);
+
+static void stepperEnable (axes_signals_t enable, bool hold)
 {
-    if(on_execute_realtime) {
-        grbl.on_execute_realtime = on_execute_realtime;
-        on_execute_realtime = NULL; // terminate any delayed disable
+    if(await_disable) {
+        await_disable = false;
+        task_delete(disable_steppers, NULL);
     }
 
     stepper_enabled.mask = enable.mask;
 
-    on_stepper_enable(enable);
+    stepper_enable(enable, hold);
 }
 
-static void disable_steppers (sys_state_t state)
+static void disable_steppers (void *data)
 {
-    if(delay_until - hal.get_elapsed_ticks() <= 0)
-        stepper_enable(stepper_enabled);
+    await_disable = false;
+    stepperEnable(stepper_enabled, false);
 }
 
-static user_mcode_t mcode_check (user_mcode_t mcode)
+static user_mcode_type_t mcode_check (user_mcode_t mcode)
 {
     return mcode == (user_mcode_t)17 || mcode == (user_mcode_t)18 || mcode == (user_mcode_t)84
-                     ? mcode
-                     : (user_mcode.check ? user_mcode.check(mcode) : UserMCode_Ignore);
+                     ? UserMCode_NoValueWords
+                     : (user_mcode.check ? user_mcode.check(mcode) : UserMCode_Unsupported);
 }
 
-static status_code_t mcode_validate (parser_block_t *gc_block, parameter_words_t *deprecated)
+static status_code_t mcode_validate (parser_block_t *gc_block)
 {
     status_code_t state = Status_OK;
 
@@ -97,7 +98,7 @@ static status_code_t mcode_validate (parser_block_t *gc_block, parameter_words_t
             break;
     }
 
-    return state == Status_Unhandled && user_mcode.validate ? user_mcode.validate(gc_block, deprecated) : state;
+    return state == Status_Unhandled && user_mcode.validate ? user_mcode.validate(gc_block) : state;
 }
 
 static void mcode_execute (uint_fast16_t state, parser_block_t *gc_block)
@@ -146,7 +147,7 @@ static void mcode_execute (uint_fast16_t state, parser_block_t *gc_block)
                 } else
                     stepper_enabled.mask = AXES_BITMASK;
 
-                stepper_enable(stepper_enabled);
+                stepperEnable(stepper_enabled, false);
             }
             break;
 
@@ -176,14 +177,10 @@ static void mcode_execute (uint_fast16_t state, parser_block_t *gc_block)
                     stepper_enabled.mask = 0;
 
                 if(gc_block->words.s && gc_block->values.s > 0.0f) {
-                    if(on_execute_realtime == NULL) {
-                        on_execute_realtime = grbl.on_execute_realtime;
-                        grbl.on_execute_realtime = disable_steppers;
-                    }
-                    delay_until = hal.get_elapsed_ticks() + (uint32_t)gc_block->values.s * 1000;
-                }
-                else
-                    stepper_enable(stepper_enabled);
+                    if(!await_disable)
+                        await_disable = task_add_delayed(disable_steppers, NULL, (uint32_t)gc_block->values.s * 1000);
+                } else
+                    stepperEnable(stepper_enabled, false);
             }
             break;
 
@@ -196,25 +193,25 @@ static void mcode_execute (uint_fast16_t state, parser_block_t *gc_block)
         user_mcode.execute(state, gc_block);
 }
 
-static void report_options (bool newopt)
+static void reportOptions (bool newopt)
 {
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Stepper enable v0.01]" ASCII_EOL);
+        report_plugin("Stepper enable", "0.03");
 }
 
 void my_plugin_init (void)
 {
-    memcpy(&user_mcode, &hal.user_mcode, sizeof(user_mcode_ptrs_t));
+    memcpy(&user_mcode, &grbl.user_mcode, sizeof(user_mcode_ptrs_t));
 
-    hal.user_mcode.check = mcode_check;
-    hal.user_mcode.validate = mcode_validate;
-    hal.user_mcode.execute = mcode_execute;
+    grbl.user_mcode.check = mcode_check;
+    grbl.user_mcode.validate = mcode_validate;
+    grbl.user_mcode.execute = mcode_execute;
 
-    on_stepper_enable = hal.stepper.enable;
-    hal.stepper.enable = stepper_enable;
+    stepper_enable = hal.stepper.enable;
+    hal.stepper.enable = stepperEnable;
 
     on_report_options = grbl.on_report_options;
-    grbl.on_report_options = report_options;
+    grbl.on_report_options = reportOptions;
 }

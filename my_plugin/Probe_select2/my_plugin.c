@@ -86,14 +86,14 @@ static nvs_address_t nvs_address;
 static on_report_options_ptr on_report_options;
 static probe2_settings_t probe2_settings;
 
-static user_mcode_t mcode_check (user_mcode_t mcode)
+static user_mcode_type_t mcode_check (user_mcode_t mcode)
 {
     return mcode == (user_mcode_t)401 || mcode == (user_mcode_t)402
-                     ? mcode
-                     : (user_mcode.check ? user_mcode.check(mcode) : UserMCode_Ignore);
+                     ? UserMCode_Normal
+                     : (user_mcode.check ? user_mcode.check(mcode) : UserMCode_Unsupported);
 }
 
-static status_code_t mcode_validate (parser_block_t *gc_block, parameter_words_t *deprecated)
+static status_code_t mcode_validate (parser_block_t *gc_block)
 {
     status_code_t state = Status_OK;
 
@@ -119,7 +119,7 @@ static status_code_t mcode_validate (parser_block_t *gc_block, parameter_words_t
             break;
     }
 
-    return state == Status_Unhandled && user_mcode.validate ? user_mcode.validate(gc_block, deprecated) : state;
+    return state == Status_Unhandled && user_mcode.validate ? user_mcode.validate(gc_block) : state;
 }
 
 static void mcode_execute (uint_fast16_t state, parser_block_t *gc_block)
@@ -244,7 +244,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Probe select 2 v0.02]" ASCII_EOL);
+        report_plugin("Probe select 2", "0.03");
 }
 
 // Add info about our settings for $help and enumerations.
@@ -364,11 +364,11 @@ void my_plugin_init (void)
             if(hal.port.set_pin_description)
                 hal.port.set_pin_description(Port_Digital, Port_Input, probe_port, "Probe 2");
 
-            memcpy(&user_mcode, &hal.user_mcode, sizeof(user_mcode_ptrs_t));
+            memcpy(&user_mcode, &grbl.user_mcode, sizeof(user_mcode_ptrs_t));
 
-            hal.user_mcode.check = mcode_check;
-            hal.user_mcode.validate = mcode_validate;
-            hal.user_mcode.execute = mcode_execute;
+            grbl.user_mcode.check = mcode_check;
+            grbl.user_mcode.validate = mcode_validate;
+            grbl.user_mcode.execute = mcode_execute;
 
             on_report_options = grbl.on_report_options;
             grbl.on_report_options = report_options;

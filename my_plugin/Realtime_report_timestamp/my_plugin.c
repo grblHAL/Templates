@@ -33,14 +33,14 @@ static on_realtime_report_ptr on_realtime_report;
 static on_report_options_ptr on_report_options;
 static user_mcode_ptrs_t user_mcode;
 
-static user_mcode_t check (user_mcode_t mcode)
+static user_mcode_type_t check (user_mcode_t mcode)
 {
     return mcode == UserMCode_Generic1
-                     ? mcode
-                     : (user_mcode.check ? user_mcode.check(mcode) : UserMCode_Ignore);
+                     ? UserMCode_Normal
+                     : (user_mcode.check ? user_mcode.check(mcode) : UserMCode_Unsupported);
 }
 
-static status_code_t validate (parser_block_t *gc_block, parameter_words_t *deprecated)
+static status_code_t validate (parser_block_t *gc_block)
 {
     status_code_t state = Status_OK;
 
@@ -48,7 +48,7 @@ static status_code_t validate (parser_block_t *gc_block, parameter_words_t *depr
 
         case UserMCode_Generic1:
             if(gc_block->words.p) {
-                if(isnanf(gc_block->values.p) || !isintf(gc_block->values.p))
+                if(!isintf(gc_block->values.p))
                     state = Status_BadNumberFormat;
                 else {
                     mcode_sync = (uint32_t)gc_block->values.p & 0x01;
@@ -69,7 +69,7 @@ static status_code_t validate (parser_block_t *gc_block, parameter_words_t *depr
             break;
     }
 
-    return state == Status_Unhandled && user_mcode.validate ? user_mcode.validate(gc_block, deprecated) : state;
+    return state == Status_Unhandled && user_mcode.validate ? user_mcode.validate(gc_block) : state;
 }
 
 static void execute (sys_state_t state, parser_block_t *gc_block) {
@@ -129,7 +129,7 @@ static void onReportOptions (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN: RT timestamp v0.03]" ASCII_EOL);
+        report_plugin("RT timestamp", "0.04");
 }
 
 void my_plugin_init (void)
@@ -140,9 +140,9 @@ void my_plugin_init (void)
     on_realtime_report = grbl.on_realtime_report;
     grbl.on_realtime_report = onRealtimeReport;
 
-    memcpy(&user_mcode, &hal.user_mcode, sizeof(user_mcode_ptrs_t));
+    memcpy(&user_mcode, &grbl.user_mcode, sizeof(user_mcode_ptrs_t));
 
-    hal.user_mcode.check = check;
-    hal.user_mcode.validate = validate;
-    hal.user_mcode.execute = execute;
+    grbl.user_mcode.check = check;
+    grbl.user_mcode.validate = validate;
+    grbl.user_mcode.execute = execute;
 }
