@@ -56,7 +56,7 @@
 #include "grbl/motion_control.h"
 #include "grbl/state_machine.h"
 
-#define VERSION "v0.09"
+#define VERSION "0.10"
 #define DC_VALUES_MAX 12
 
 typedef enum {
@@ -1027,7 +1027,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:HPGL " VERSION ASCII_EOL);
+        report_plugin("HPGL", VERSION);
 }
 
 status_code_t hpgl_start (sys_state_t state, char *args)
@@ -1044,7 +1044,7 @@ status_code_t hpgl_start (sys_state_t state, char *args)
     base_handler = stream_insert_buffer;
     enqueue_realtime_command = hal.stream.set_enqueue_rt_handler(base_handler);
 
-    stream.write("Motori HPGL " VERSION ASCII_EOL);
+    stream.write("Motori HPGL v" VERSION ASCII_EOL);
 
     if(on_execute_realtime == NULL) {
         on_execute_realtime = grbl.on_execute_realtime;
@@ -1060,7 +1060,7 @@ status_code_t hpgl_start (sys_state_t state, char *args)
 
 void hpgl_boot (void *data)
 {
-    hpgl_start(state, NULL);
+    hpgl_start(state_get(), NULL);
 }
 
 const sys_command_t hpgl_command_list[] = {
