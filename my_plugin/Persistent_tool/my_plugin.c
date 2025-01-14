@@ -1,5 +1,4 @@
 /*
-
   my_plugin.c - user defined plugin for keeping current number tool over reboot
 
   Set $485=1 to enable, $485=0 to disable.
@@ -7,7 +6,9 @@
   Part of grblHAL
 
   Public domain.
-
+  This code is is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 */
 
 #include "grbl/hal.h"
@@ -57,22 +58,13 @@ static void plugin_settings_load (void)
         plugin_settings_restore();
 }
 
-// Settings descriptor used by the core when interacting with this plugin.
-static setting_details_t setting_details = {
-    .settings = user_settings,
-    .n_settings = sizeof(user_settings) / sizeof(setting_detail_t),
-    .save = plugin_settings_save,
-    .load = plugin_settings_load,
-    .restore = plugin_settings_restore
-};
-
 // Add info about our plugin to the $I report.
 static void onReportOptions (bool newopt)
 {
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Persistent tool v0.02]" ASCII_EOL);
+        report_plugin("Persistent tool", "0.02");
 }
 
 static void onToolChanged (tool_data_t *tool)
@@ -105,6 +97,15 @@ static void onParserInit (parser_state_t *gc_state)
 // There is no need to change any source code elsewhere.
 void my_plugin_init (void)
 {
+    // Settings descriptor used by the core when interacting with this plugin.
+    static setting_details_t setting_details = {
+        .settings = user_settings,
+        .n_settings = sizeof(user_settings) / sizeof(setting_detail_t),
+        .save = plugin_settings_save,
+        .load = plugin_settings_load,
+        .restore = plugin_settings_restore
+    };
+ 
     // Try to allocate space for our settings in non volatile storage (NVS).
     if((nvs_address = nvs_alloc(sizeof(plugin_settings_t)))) {
 

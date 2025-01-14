@@ -1,5 +1,4 @@
 /*
-
   my_plugin.c - plugin for pausing (enter feed hold) when a SD file is run.
   
   A cycle start command has to be issued to start execution.
@@ -9,7 +8,9 @@
   Part of grblHAL
 
   Public domain.
-
+  This code is is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 */
 
 #include "grbl/hal.h"
@@ -32,7 +33,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:SD Pause v0.01]" ASCII_EOL);
+        report_plugin("SD Pause", "0.01");
 }
 
 void my_plugin_init (void)

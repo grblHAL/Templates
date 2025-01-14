@@ -1,6 +1,12 @@
 /*
-
   my_plugin.c.c - Real time report timestamp
+
+  Part of grblHAL
+
+  Public domain.
+  This code is is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
   Adds timestamp in |TS element to real time report, millisecond resolution.
 
@@ -14,11 +20,6 @@
   NOTE: be sure to set the RTC before switching to RTC output.
 
   When synchrounous mode is active delay reset until buffered motions has been completed.
-
-  Part of grblHAL
-
-  Public domain.
-
 */
 
 #include <math.h>

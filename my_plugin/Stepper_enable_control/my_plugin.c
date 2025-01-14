@@ -1,10 +1,12 @@
 /*
-
   my_plugin.c - plugin for M17 & M18 (M84) Marlin style stepper enable/disable commands.
 
   Part of grblHAL
 
   Public domain.
+  This code is is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
   Usage:
     M17[X][Y][Z] - enable steppers
@@ -16,7 +18,6 @@
 
   https://marlinfw.org/docs/gcode/M017.html
   https://marlinfw.org/docs/gcode/M018.html
-
 */
 
 #include <math.h>

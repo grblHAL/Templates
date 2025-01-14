@@ -1,5 +1,4 @@
 /*
-
   my_plugin.c.c - MCU load estimator
 
   Counts number of iterations of protocol idle loop per 10ms and add count to real time report.
@@ -9,7 +8,9 @@
   Part of grblHAL
 
   Public domain.
-
+  This code is is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 */
 
 #include <string.h>
@@ -62,7 +63,7 @@ static void onReportOptions (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:MCU Load v0.01]" ASCII_EOL);
+        report_plugin("MCU Load", "v0.01");
 }
 
 void my_plugin_init (void)

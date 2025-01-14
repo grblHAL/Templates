@@ -1,11 +1,12 @@
 /*
-
-  solenoid.c - sets PWM output to full power on spindle on, reduces it after a short delay.
+  my_plugin.c - sets PWM output to full power on spindle on, reduces it after a short delay.
 
   Part of grblHAL
 
   Public domain
-
+  This code is is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 */
 
 #include "driver.h"
@@ -20,14 +21,6 @@ static spindle_ptrs_t pwm_spindle;
 static on_report_options_ptr on_report_options;
 static on_execute_realtime_ptr on_execute_realtime;
 static on_spindle_select_ptr on_spindle_select;
-
-static void solenoid_options (bool newopt)
-{
-    on_report_options(newopt);
-
-    if(!newopt)
-        hal.stream.write("[PLUGIN:Solenoid spindle v1.03]" ASCII_EOL);
-}
 
 static void solenoid_reduce_current (sys_state_t state)
 {
@@ -55,10 +48,19 @@ static bool solenoid_spindle_select (spindle_ptrs_t *spindle)
     return on_spindle_select == NULL || on_spindle_select(spindle);
 }
 
+static void onReportOptions (bool newopt)
+{
+    on_report_options(newopt);
+
+    if(!newopt)
+        report_plugin("Solenoid spindle", "1.04");
+}
+
+
 void my_plugin_init (void)
 {
     on_report_options = grbl.on_report_options;
-    grbl.on_report_options = solenoid_options;
+    grbl.on_report_options = onReportOptions;
 
     on_execute_realtime = grbl.on_execute_realtime;
     grbl.on_execute_realtime = solenoid_reduce_current;

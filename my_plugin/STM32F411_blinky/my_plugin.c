@@ -1,11 +1,12 @@
 /*
-
   my_plugin.c - user defined plugin that blinks the LED on a STM32F411 Blackpill
 
   Part of grblHAL
 
   Public domain
-
+  This code is is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 */
 
 #include "driver.h"

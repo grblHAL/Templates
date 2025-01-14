@@ -1,10 +1,12 @@
 /*
-
   my_plugin.c - plugin for monitoring motor power
 
   Part of grblHAL
 
   Public domain.
+  This code is is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
 
   On power loss alarm 17 is raised (Motor fault).
   On alarm cleared or soft reset a M122I command is issued to reinit Trinamic drivers if power is back on.
@@ -23,6 +25,7 @@
 #include "grbl/nvs_buffer.h"
 #include "grbl/protocol.h"
 #include "grbl/state_machine.h"
+#include "grbl/task.h"
 
 typedef enum {
     Power_On = 0,
@@ -40,18 +43,31 @@ static power_state_t power_state = Power_On;
 static nvs_address_t nvs_address;
 static power_settings_t plugin_settings;
 static on_report_options_ptr on_report_options;
-static settings_changed_ptr settings_changed;
-static on_state_change_ptr on_state_change = NULL;
-static driver_reset_ptr driver_reset;
 
+static status_code_t set_port (setting_id_t setting, float value)
+{
+    if(!isintf(value))
+        return Status_BadNumberFormat;
+
+    plugin_settings.port = value < 0.0f ? 0xFF : (uint8_t)value;
+
+    return Status_OK;
+}
+
+static float get_port (setting_id_t setting)
+{
+    return plugin_settings.port >= n_ports ? -1.0f : (float) plugin_settings.port;
+}
+
+// Use a float (decimal) setting with getter/setter functions so -1 can be used to disable the plugin.
 static const setting_detail_t power_settings[] = {
-    { Setting_UserDefined_0, Group_AuxPorts, "Macro 1 port", NULL, Format_Int8, "#0", "0", max_port, Setting_NonCore, &plugin_settings.port, NULL, NULL },
+    { Setting_UserDefined_0, Group_AuxPorts, "Power monitor port", NULL, Format_Decimal, "-#0", "-1", max_port, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } }
 };
 
 #ifndef NO_SETTINGS_DESCRIPTIONS
 
 static const setting_descr_t power_settings_descr[] = {
-    { Setting_UserDefined_0, "Macro content for macro 1, separate blocks (lines) with the vertical bar character |." },
+    { Setting_UserDefined_0, "Auxiliary port to use for stepper power monitoring. Set to -1 to disable." }
 };
 
 #endif
@@ -62,32 +78,7 @@ static void power_settings_save (void)
     hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&plugin_settings, sizeof(power_settings_t), true);
 }
 
-// Restore default settings and write to non volatile storage (NVS).
-static void power_settings_restore (void)
-{
-    if(ioport_can_claim_explicit()) {
-
-        xbar_t *portinfo;
-        uint8_t port = n_ports;
-
-        plugin_settings.port = 0;
-
-        // Find highest numbered port that supports change interrupt.
-        if(port > 0) do {
-            port--;
-            if((portinfo = hal.port.get_pin_info(Port_Digital, Port_Input, port))) {
-                if(!portinfo->cap.claimed && (portinfo->cap.irq_mode & IRQ_Mode_Change)) {
-                    plugin_settings.port = port;
-                    break;
-                }
-            }
-        } while(port);
-    }
-
-    hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&plugin_settings, sizeof(power_settings_t), true);
-}
-
-static void check_power_restored (void)
+static void check_power_restored (void *data)
 {
     if(hal.port.wait_on_input(Port_Digital, port, WaitMode_Immediate, 0.0f) == 1) {
 
@@ -96,33 +87,17 @@ static void check_power_restored (void)
         report_message("Motor power restored", Message_Info);
         grbl.enqueue_gcode("M122I");
 
-        if(on_state_change != NULL) {
-            grbl.on_state_change = on_state_change;
-            on_state_change = NULL;
-        }
-    }
-}
-
-static void on_driver_reset (void)
-{
-    driver_reset();
-
-    if(power_state != Power_On)
-        check_power_restored();
-}
-
-// Wait for idle state (alarm cleared) before issuing command.
-static void await_idle (sys_state_t state)
-{
-    if(state == STATE_IDLE)
-        check_power_restored();
+    } else
+        task_add_delayed(check_power_restored, NULL, 250);
 }
 
 // Raise motor fault alarm.
 static void raise_power_alarm (void *data)
 {
-    if(power_state == Power_Alarm)
+    if(power_state == Power_Alarm) {
         system_raise_alarm(Alarm_MotorFault);
+        task_add_delayed(check_power_restored, NULL, 250);
+    }
 
     power_state = Power_Lost;
 }
@@ -136,20 +111,16 @@ static void on_power_change (uint8_t port, bool state)
             protocol_enqueue_foreground_task(raise_power_alarm, NULL);
             power_state = Power_Alarm;
         }
-    } else if(on_state_change == NULL && power_state == Power_Lost) {
-        // power is back on, wait for idle status
-        on_state_change = grbl.on_state_change;
-        grbl.on_state_change = await_idle;
     }
 }
 
-// Called when settings changes, we have to (re)register our interrupt handler.
-static void on_settings_changed (settings_t *settings, settings_changed_flags_t changed)
+// Restore default settings and write to non volatile storage (NVS).
+static void power_settings_restore (void)
 {
-    settings_changed(settings, changed);
+    // Find highest numbered port that supports change interrupt, or keep the current one if found.
+    plugin_settings.port = ioport_find_free(Port_Digital, Port_Input, (pin_cap_t){ .irq_mode = IRQ_Mode_Change, .claimable = On }, "Motor supply monitor");
 
-    if(port != 0xFF)
-        hal.port.register_interrupt_handler(port, IRQ_Mode_Change, on_power_change);
+    hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&plugin_settings, sizeof(power_settings_t), true);
 }
 
 // Load our settings from non volatile storage (NVS).
@@ -159,78 +130,64 @@ static void power_settings_load (void)
     if(hal.nvs.memcpy_from_nvs((uint8_t *)&plugin_settings, nvs_address, sizeof(power_settings_t), true) != NVS_TransferResult_OK)
         power_settings_restore();
 
+    // Sanity check
     if(plugin_settings.port >= n_ports)
-        plugin_settings.port = n_ports - 1;
+        plugin_settings.port = 0xFF;
 
-    port = plugin_settings.port;
+    // If port is valid try claiming it, if successful register an interrupt handler.
+    if((port = plugin_settings.port) != 0xFF) {
 
-    xbar_t *portinfo = hal.port.get_pin_info(Port_Digital, Port_Input, port);
-
-    if(portinfo && !portinfo->cap.claimed && (portinfo->cap.irq_mode & IRQ_Mode_Change) && ioport_claim(Port_Digital, Port_Input, &port, "Motor supply monitor")) {
-        // (Re)register interrupt on settings change.
-        settings_changed = hal.settings_changed;
-        hal.settings_changed = on_settings_changed;
-    } else {
-        port = 0xFF;
-        protocol_enqueue_foreground_task(report_warning, "Motor supply monitor plugin failed to claim needed port!");
+        xbar_t *portinfo = ioport_get_info(Port_Digital, Port_Input, port);
+        if(portinfo && (portinfo->cap.irq_mode & IRQ_Mode_Change) && ioport_claim(Port_Digital, Port_Input, &port, "Motor supply monitor")) {
+            hal.port.register_interrupt_handler(port, IRQ_Mode_Change, on_power_change);
+            // TODO add check for power present and raise alarm if not?
+        } else {
+            port = 0xFF;
+            protocol_enqueue_foreground_task(report_warning, "Motor supply monitor plugin failed to claim needed port!");
+        }
     }
 }
 
-// Settings descriptor used by the core when interacting with this plugin.
-static setting_details_t setting_details = {
-    .settings = power_settings,
-    .n_settings = sizeof(power_settings) / sizeof(setting_detail_t),
-#ifndef NO_SETTINGS_DESCRIPTIONS
-    .descriptions = power_settings_descr,
-    .n_descriptions = sizeof(power_settings_descr) / sizeof(setting_descr_t),
-#endif
-    .save = power_settings_save,
-    .load = power_settings_load,
-    .restore = power_settings_restore
-};
-
 // Add info about our plugin to the $I report.
-static void report_options (bool newopt)
+static void onReportOptions (bool newopt)
 {
     on_report_options(newopt);
 
     if(!newopt)
-        hal.stream.write("[PLUGIN:Motor supply monitor v0.03]" ASCII_EOL);
+        report_plugin("Motor supply monitor", "0.03");
 }
 
 // A call my_plugin_init will be issued automatically at startup.
 // There is no need to change any source code elsewhere.
 void my_plugin_init (void)
 {
-    bool ok = (n_ports = ioports_available(Port_Digital, Port_Input));
+    // Settings descriptor used by the core when interacting with this plugin.
+    static setting_details_t setting_details = {
+        .settings = power_settings,
+        .n_settings = sizeof(power_settings) / sizeof(setting_detail_t),
+    #ifndef NO_SETTINGS_DESCRIPTIONS
+        .descriptions = power_settings_descr,
+        .n_descriptions = sizeof(power_settings_descr) / sizeof(setting_descr_t),
+    #endif
+        .save = power_settings_save,
+        .load = power_settings_load,
+        .restore = power_settings_restore
+    };
 
-    if(ok) {
+    // If auxiliary input available and enough free non volatile memory register our plugin with the core.
+    if(ioport_can_claim_explicit() &&
+       (n_ports = ioports_available(Port_Digital, Port_Input)) &&
+        (nvs_address = nvs_alloc(sizeof(power_settings_t)))) {
 
-        if(!ioport_can_claim_explicit()) {
+        // Create a string of the highest port number allowed, used for $-setting input validation.
+        strcpy(max_port, uitoa(n_ports - 1));
 
-            // Driver does not support explicit pin claiming, claim the highest numbered port instead.
-
-            if((ok = (n_ports = hal.port.num_digital_in) > 0 && (nvs_address = nvs_alloc(sizeof(power_settings_t)))))
-                plugin_settings.port = --hal.port.num_digital_in;
-
-        } else if((ok = (n_ports = ioports_available(Port_Digital, Port_Input)) > 0 && (nvs_address = nvs_alloc(sizeof(power_settings_t)))))
-            strcpy(max_port, uitoa(n_ports - 1));
-    }
-
-    // If enough free non volatile memory register our plugin with the core.
-    if(ok) {
         // Register settings.
         settings_register(&setting_details);
 
-        // Used for setting value validation.
-        strcpy(max_port, uitoa(n_ports - 1));
-
         // Add our plugin to the $I options report.
         on_report_options = grbl.on_report_options;
-        grbl.on_report_options = report_options;
-
-        driver_reset = hal.driver_reset;
-        hal.driver_reset = on_driver_reset;
+        grbl.on_report_options = onReportOptions;
     } else
         protocol_enqueue_foreground_task(report_warning, "Motor supply monitor plugin failed to claim needed port!");
 }
