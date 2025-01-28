@@ -64,7 +64,7 @@ static void onReportOptions (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("Persistent tool", "0.02");
+        report_plugin("Persistent tool", "0.03");
 }
 
 static void onToolChanged (tool_data_t *tool)
@@ -88,7 +88,7 @@ static void onParserInit (parser_state_t *gc_state)
         if(my_settings.tool_id <= N_TOOLS)
             gc_state->tool = &grbl.tool_table.tool[my_settings.tool_id];
       #else
-        gc_state->tool->tool_id = my_settings.tool_id;
+        gc_state->tool->tool_id = gc_state->tool_pending = my_settings.tool_id;
       #endif
     }
 }

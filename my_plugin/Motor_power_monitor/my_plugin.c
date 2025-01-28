@@ -85,7 +85,9 @@ static void check_power_restored (void *data)
         power_state = Power_On;
 
         report_message("Motor power restored", Message_Info);
-        grbl.enqueue_gcode("M122I");
+        // Reset stepper drivers
+        if(hal.stepper.stepper_status)
+            hal.stepper.stepper_status(true);
 
     } else
         task_add_delayed(check_power_restored, NULL, 250);
