@@ -32,6 +32,7 @@
 
 #include "grbl/hal.h"
 #include "grbl/protocol.h"
+#include "grbl/task.h"
 
 #include <math.h>
 #include <string.h>
@@ -346,7 +347,7 @@ static void plugin_settings_load (void)
             grbl.on_probe_toolsetter = probeToolSetter;
 
         } else
-            protocol_enqueue_foreground_task(report_warning, "Probe select plugin: probe port is not available");
+            task_run_on_startup(report_warning, "Probe select plugin: probe port is not available");
     }
 
     if((overtravel_port = probe2_settings.overtravel_port) != 0xFF) {
@@ -359,7 +360,7 @@ static void plugin_settings_load (void)
             control_signals_get_state = hal.control.get_state;
             hal.control.get_state = signalsGetState;
         } else
-            protocol_enqueue_foreground_task(report_warning, "Probe select plugin: overtravel port is not available");
+            task_run_on_startup(report_warning, "Probe select plugin: overtravel port is not available");
     }
 }
 
@@ -368,7 +369,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("Probe select 2", "0.04");
+        report_plugin("Probe select 2", "0.05");
 }
 
 void my_plugin_init (void)
@@ -399,5 +400,5 @@ void my_plugin_init (void)
         settings_register(&setting_details);
 
     } else
-        protocol_enqueue_foreground_task(report_warning, "Probe select plugin failed to initialize!");
+        task_run_on_startup(report_warning, "Probe select plugin failed to initialize!");
 }

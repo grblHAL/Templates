@@ -3,8 +3,6 @@
   
   A cycle start command has to be issued to start execution.
 
-  NOTE: build 20210928 or later is required for this plugin.
-  
   Part of grblHAL
 
   Public domain.
@@ -21,11 +19,15 @@ static on_report_options_ptr on_report_options;
 
 static void stream_changed (stream_type_t type)
 {
+
     if(on_stream_changed)
         on_stream_changed(type);
 
-    if(type == StreamType_SDCard)
-        gc_execute_block("M1");
+    if(type == StreamType_SDCard) {
+        char m1[5];
+        strcpy(m1, "M1");
+        gc_execute_block(m1);
+    }
 }
 
 static void report_options (bool newopt)
@@ -33,7 +35,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("SD Pause", "0.01");
+        report_plugin("SD Pause", "0.02");
 }
 
 void my_plugin_init (void)

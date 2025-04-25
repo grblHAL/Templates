@@ -55,8 +55,9 @@
 #include "grbl/protocol.h"
 #include "grbl/motion_control.h"
 #include "grbl/state_machine.h"
+#include "grbl/task.h"
 
-#define VERSION "0.10"
+#define VERSION "0.11"
 #define DC_VALUES_MAX 12
 
 typedef enum {
@@ -548,19 +549,19 @@ static void go_home (void)
 // Device Control Instructions handling (ESC . ...)
 //
 
-void report_buffer_free (sys_state_t state)
+void report_buffer_free (void *data)
 {
     hal.stream.write(uitoa(hal.stream.get_rx_buffer_free()));
     hal.stream.write(ASCII_EOL);
 }
 
-void report_buffer_size (sys_state_t state)
+void report_buffer_size (void *data)
 {
     hal.stream.write(uitoa(hal.rx_buffer_size - 1));
     hal.stream.write(ASCII_EOL);
 }
 
-void report_extended_error (sys_state_t state)
+void report_extended_error (void *data)
 {
     hal.stream.write(uitoa(dc_values.error));
     hal.stream.write(ASCII_EOL);
@@ -571,7 +572,7 @@ void report_extended_error (sys_state_t state)
     dc_values.error = IOError_None; //??
 }
 
-void report_extended_status (sys_state_t state)
+void report_extended_status (void *data)
 {
     union {
         uint8_t status;
@@ -736,11 +737,11 @@ static ISR_CODE bool ISR_FUNC(stream_parse_esc)(char c)
                 break;
 
             case 'B':
-                protocol_enqueue_rt_command(report_buffer_free);
+                task_add_immediate(report_buffer_free, NULL);
                 break;
                 
             case 'E':
-                protocol_enqueue_rt_command(report_extended_error);
+                task_add_immediate(report_extended_error, NULL);
                 break;
         
             case 'H':
@@ -756,7 +757,7 @@ static ISR_CODE bool ISR_FUNC(stream_parse_esc)(char c)
                 break;
 
             case 'L':   
-                protocol_enqueue_rt_command(report_buffer_size);
+                task_add_immediate(report_buffer_size, NULL);
                 break;
 
             case 'M':
@@ -768,7 +769,7 @@ static ISR_CODE bool ISR_FUNC(stream_parse_esc)(char c)
                 break;
      
             case 'O':
-                protocol_enqueue_rt_command(report_extended_status);
+                task_add_immediate(report_extended_status, NULL);
                 break;
 
             case 'R':

@@ -13,7 +13,7 @@
 #include <string.h>
 
 #include "driver.h"
-#include "grbl/protocol.h"
+#include "grbl/task.h"
 #include "grbl/nvs_buffer.h"
 
 #define PLUGIN_SETTING Setting_UserDefined_9
@@ -102,7 +102,7 @@ static void plugin_settings_load (void)
             on_state_change = grbl.on_state_change;         // Subscribe to the state changed event by saving away the original
             grbl.on_state_change = onStateChanged;          // function pointer and adding ours to the chain.
         } else
-            protocol_enqueue_foreground_task(report_warning, "Feed hold plugin: configured port number is not available");
+            task_run_on_startup(report_warning, "Feed hold plugin: configured port number is not available");
     }
 }
 
@@ -111,7 +111,7 @@ static void onReportOptions (bool newopt)
     on_report_options(newopt);  // Call previous function in the chain.
 
     if(!newopt)                 // Add info about us to the $I report.
-        report_plugin("PLUGIN Template 2", "v0.02");
+        report_plugin("PLUGIN Template 2", "v0.03");
 }
 
 void my_plugin_init (void)

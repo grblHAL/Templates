@@ -35,6 +35,7 @@
 #include "grbl/protocol.h"
 #include "grbl/state_machine.h"
 #include "grbl/platform.h"
+#include "grbl/task.h"
 
 #if N_MACROS > 4
 #undef N_MACROS
@@ -140,7 +141,7 @@ ISR_CODE static void execute_macro (uint8_t irq_port, bool is_high)
         command = plugin_settings.macro[idx].data;
         if(!(*command == '\0' || *command == 0xFF)) {    // If valid command
             is_executing = true;
-            protocol_enqueue_foreground_task(run_macro, NULL);     // register run_macro function to be called from foreground process.
+            task_add_immediate(run_macro, NULL);     // register run_macro function to be called from foreground process.
         }
     }
 }
@@ -278,7 +279,7 @@ static void macro_settings_load (void)
     } while(idx);
 
     if(n_ok < n_enabled)
-        protocol_enqueue_foreground_task(report_warning, "Macro plugin failed to claim all needed ports!");
+        task_run_on_startup(report_warning, "Macro plugin failed to claim all needed ports!");
 }
 
 // Add info about our plugin to the $I report.
@@ -287,7 +288,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("Macro plugin (PD)", "0.03");
+        report_plugin("Macro plugin (PD)", "0.04);
 }
 
 // A call my_plugin_init will be issued automatically at startup.
@@ -330,5 +331,5 @@ void my_plugin_init (void)
         driver_reset = hal.driver_reset;
         hal.driver_reset = plugin_reset;
     } else
-        protocol_enqueue_foreground_task(report_warning, "Macro plugin failed to initialize!");
+        task_run_on_startup(report_warning, "Macro plugin failed to initialize!");
 }
