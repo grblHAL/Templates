@@ -47,12 +47,14 @@ typedef enum {
     ProbeMode_MaxValue = ProbeMode_Manual,
 } probe_mode_t;
 
-static uint8_t probe_port;
+static uint8_t probe_port, overtravel_port;
 static bool use_probe2 = false;
 static probe_state_t probe = {
     .connected = On
 };
+static io_port_cfg_t d_in, d_in;
 static probe_mode_t probe_mode = ProbeMode_AtG59_3; // Default mode
+
 static driver_reset_ptr driver_reset;
 static probe_configure_ptr probe_configure;
 static probe_get_state_ptr probe_get_state;
@@ -60,16 +62,12 @@ static on_probe_toolsetter_ptr on_probe_toolsetter;
 static user_mcode_ptrs_t user_mcode;
 static on_report_options_ptr on_report_options;
 static driver_reset_ptr driver_reset;
-static uint8_t overtravel_port;
 static control_signals_get_state_ptr control_signals_get_state;
 
 #include "grbl/nvs_buffer.h"
 
 #define PROBE_PLUGIN_SETTING Setting_UserDefined_0
 #define PROBE_PLUGIN_SETTING1 Setting_UserDefined_1
-
-static uint8_t n_ports;
-static char max_port[4];
 
 typedef struct {
     uint8_t probe_port;
@@ -185,7 +183,7 @@ static control_signals_t signalsGetState (void)
 {
     control_signals_t signals = control_signals_get_state();
 
-    signals.probe_overtravel = hal.port.wait_on_input(Port_Digital, overtravel_port, WaitMode_Immediate, 0.0f);
+    signals.probe_overtravel = ioport_wait_on_input(Port_Digital, overtravel_port, WaitMode_Immediate, 0.0f);
 
     return signals;
 }
@@ -200,7 +198,7 @@ static void on_overtravel (uint8_t port, bool state)
 // and the probing cycle modes for toward-workpiece/away-from-workpiece.
 static void probeConfigure (bool is_probe_away, bool probing)
 {
-    xbar_t *portinfo = hal.port.get_pin_info(Port_Digital, Port_Input, probe_port);
+    xbar_t *portinfo = ioport_get_info(Port_Digital, Port_Input, probe_port);
 
     probe.inverted = is_probe_away ? !portinfo->mode.inverted : portinfo->mode.inverted;
     probe.triggered = Off;
@@ -215,7 +213,7 @@ static probe_state_t probeGetState (void)
     probe_state_t state = probe_get_state();
 
     if(use_probe2) {
-        state.triggered = hal.port.wait_on_input(Port_Digital, probe_port, WaitMode_Immediate, 0.0f) ^ probe.inverted;
+        state.triggered = ioport_wait_on_input(Port_Digital, probe_port, WaitMode_Immediate, 0.0f) ^ probe.inverted;
         state.connected = probe.connected;
     }
 
@@ -237,11 +235,11 @@ static status_code_t set_port (setting_id_t setting, float value)
       switch(setting) {
 
         case PROBE_PLUGIN_SETTING:
-            probe2_settings.probe_port = value < 0.0f ? 255 : (uint8_t)value;
+            status = d_in.set_value(&d_in, & probe2_settings.probe_port, (pin_cap_t){}, value);
             break;
 
         case PROBE_PLUGIN_SETTING1:
-            probe2_settings.overtravel_port = value < 0.0f ? 255 : (uint8_t)value;
+            status = d_in.set_value(&d_in, & probe2_settings.overtravel_port, (pin_cap_t){ .irq_mode = IRQ_Mode_Change }, value);
             break;
 
         default:
@@ -258,11 +256,11 @@ static float get_port (setting_id_t setting)
     switch(setting) {
 
         case PROBE_PLUGIN_SETTING:
-            value = probe2_settings.probe_port >= n_ports ? -1.0f : (float)probe2_settings.probe_port;
+            value = d_in.get_value(&d_in, probe2_settings.probe_port);
             break;
 
         case PROBE_PLUGIN_SETTING1:
-            value = probe2_settings.overtravel_port >= n_ports ? -1.0f : (float)probe2_settings.overtravel_port;
+            value = d_in.get_value(&d_in, probe2_settings.overtravel_port);
             break;
 
         default:
@@ -275,11 +273,9 @@ static float get_port (setting_id_t setting)
 // Add info about our settings for $help and enumerations.
 // Potentially used by senders for settings UI.
 static const setting_detail_t user_settings[] = {
-    { PROBE_PLUGIN_SETTING, Group_Probing, "Probe 2 aux port", NULL, Format_Decimal, "-#0", "-1", max_port, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } },
-    { PROBE_PLUGIN_SETTING1, Group_Probing, "Probe 2 overtravel aux port", NULL, Format_Decimal, "-#0", "-1", max_port, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } }
+    { PROBE_PLUGIN_SETTING, Group_Probing, "Probe 2 aux port", NULL, Format_Decimal, "-#0", "-1", d_in.port_maxs, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } },
+    { PROBE_PLUGIN_SETTING1, Group_Probing, "Probe 2 overtravel aux port", NULL, Format_Decimal, "-#0", "-1", d_in.port_maxs, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } }
 };
-
-#ifndef NO_SETTINGS_DESCRIPTIONS
 
 static const setting_descr_t probe2_settings_descr[] = {
     { PROBE_PLUGIN_SETTING, "Aux port number to use for second probe input. Set to -1 to disable." },
@@ -288,8 +284,6 @@ static const setting_descr_t probe2_settings_descr[] = {
                              "NOTE: if input inversion is changed with $370 a hard reset is required to reconfigure the port!"
     }
 };
-
-#endif
 
 // Write settings to non volatile storage (NVS).
 static void plugin_settings_save (void)
@@ -301,10 +295,9 @@ static void plugin_settings_save (void)
 // Default is highest numbered free port.
 static void plugin_settings_restore (void)
 {
-    probe2_settings.overtravel_port = 0xFF;
-
     // Find highest numbered port, or keep the current one if found.
-    probe2_settings.probe_port = ioport_find_free(Port_Digital, Port_Input, (pin_cap_t){ .claimable = On }, "Probe 2");
+    probe2_settings.probe_port = d_in.get_next(&d_in, IOPORT_UNASSIGNED, "Probe 2", (pin_cap_t){ .irq_mode = IRQ_Mode_Change });
+    probe2_settings.overtravel_port = d_in.get_next(&d_in, probe2_settings.probe_port, "Probe 2 overtravel", (pin_cap_t){ .irq_mode = IRQ_Mode_Change });
 
     hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&probe2_settings, sizeof(probe2_settings_t), true);
 }
@@ -317,16 +310,14 @@ static void plugin_settings_load (void)
         plugin_settings_restore();
 
     // Sanity checks
-    if(probe2_settings.probe_port >= n_ports)
-        probe2_settings.probe_port = 0xFF;
-    if(probe2_settings.overtravel_port >= n_ports)
-        probe2_settings.overtravel_port = 0xFF;
+    if(probe2_settings.probe_port >= d_in.n_ports)
+        probe2_settings.probe_port = IOPORT_UNASSIGNED;
+    if(probe2_settings.overtravel_port >= d_in.n_ports)
+        probe2_settings.overtravel_port = IOPORT_UNASSIGNED;
 
-    if((probe_port = probe2_settings.probe_port) != 0xFF) {
+    if((probe_port = probe2_settings.probe_port) != IOPORT_UNASSIGNED) {
 
-        xbar_t *portinfo = ioport_get_info(Port_Digital, Port_Input, probe_port);
-
-        if(portinfo && ioport_claim(Port_Digital, Port_Input, &probe_port, "Probe 2")) {
+        if(d_in.claim(&d_in, &probe_port, "Probe 2", (pin_cap_t){})) {
 
             memcpy(&user_mcode, &grbl.user_mcode, sizeof(user_mcode_ptrs_t));
 
@@ -350,12 +341,12 @@ static void plugin_settings_load (void)
             task_run_on_startup(report_warning, "Probe select plugin: probe port is not available");
     }
 
-    if((overtravel_port = probe2_settings.overtravel_port) != 0xFF) {
+    if((overtravel_port = probe2_settings.overtravel_port) != IOPORT_UNASSIGNED) {
 
-        xbar_t *portinfo = ioport_get_info(Port_Digital, Port_Input, overtravel_port);
-        if(portinfo && (portinfo->cap.irq_mode & IRQ_Mode_Change) && ioport_claim(Port_Digital, Port_Input, &overtravel_port, "Probe 2 overtravel")) {
+        xbar_t *pin;
 
-            hal.port.register_interrupt_handler(overtravel_port, portinfo->mode.inverted ? IRQ_Mode_Falling : IRQ_Mode_Rising, on_overtravel);
+        if((pin = d_in.claim(&d_in, &overtravel_port, "Probe 2 overtravel", (pin_cap_t){ .irq_mode = IRQ_Mode_Change })) &&
+             ioport_enable_irq(overtravel_port, pin->mode.inverted ? IRQ_Mode_Falling : IRQ_Mode_Rising, on_overtravel)) {
 
             control_signals_get_state = hal.control.get_state;
             hal.control.get_state = signalsGetState;
@@ -369,7 +360,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("Probe select 2", "0.05");
+        report_plugin("Probe select 2", "0.06");
 }
 
 void my_plugin_init (void)
@@ -378,21 +369,14 @@ void my_plugin_init (void)
     static setting_details_t setting_details = {
         .settings = user_settings,
         .n_settings = sizeof(user_settings) / sizeof(setting_detail_t),
-    #ifndef NO_SETTINGS_DESCRIPTIONS
         .descriptions = probe2_settings_descr,
         .n_descriptions = sizeof(probe2_settings_descr) / sizeof(setting_descr_t),
-    #endif
         .save = plugin_settings_save,
         .load = plugin_settings_load,
         .restore = plugin_settings_restore
     };
 
-    if(ioport_can_claim_explicit() &&
-       (n_ports = ioports_available(Port_Digital, Port_Input)) &&
-        (nvs_address = nvs_alloc(sizeof(probe2_settings_t)))) {
-
-        // Used for setting value validation
-        strcpy(max_port, uitoa(n_ports - 1));
+    if(ioports_cfg(&d_in, Port_Digital, Port_Input)->n_ports && (nvs_address = nvs_alloc(sizeof(probe2_settings_t)))) {
 
         on_report_options = grbl.on_report_options;
         grbl.on_report_options = report_options;

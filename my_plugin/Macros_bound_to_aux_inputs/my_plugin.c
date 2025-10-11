@@ -51,11 +51,15 @@ typedef struct {
     macro_setting_t macro[N_MACROS];
 } macro_settings_t;
 
+static const pin_cap_t pin_caps = { .irq_mode = IRQ_Mode_Falling };
+
 static bool is_executing = false;
-static uint8_t n_ports;
 uint8_t port[N_MACROS];
-static char max_port[4], *command;
+static char *command;
+static const char *const label[] = { "Macro 1 input", "Macro 2 input", "Macro 3 input", "Macro 4 input" };
+static io_port_cfg_t d_in;
 static nvs_address_t nvs_address;
+
 static on_report_options_ptr on_report_options;
 static macro_settings_t plugin_settings;
 static stream_read_ptr stream_read;
@@ -155,20 +159,12 @@ static const setting_group_detail_t macro_groups [] = {
 
 static status_code_t set_port (setting_id_t setting, float value)
 {
-    status_code_t status;
-    uint_fast8_t idx = setting - Setting_UserDefined_4;
-
-    if((status = isintf(value) ? Status_OK : Status_BadNumberFormat) == Status_OK)
-        plugin_settings.macro[idx].port = value < 0.0f ? 255 : (uint8_t)value;
-
-    return status;
+    return d_in.set_value(&d_in, &plugin_settings.macro[setting - Setting_UserDefined_4].port, pin_caps, value);;
 }
 
 static float get_port (setting_id_t setting)
 {
-    uint_fast8_t idx = setting - Setting_UserDefined_4;
-
-    return plugin_settings.macro[idx].port;
+    return d_in.get_value(&d_in, plugin_settings.macro[setting - Setting_UserDefined_4].port);
 }
 
 static const setting_detail_t macro_settings[] = {
@@ -182,19 +178,17 @@ static const setting_detail_t macro_settings[] = {
 #if N_MACROS > 3
     { Setting_UserDefined_3, Group_UserSettings, "Macro 4", NULL, Format_String, "x(127)", "0", "127", Setting_NonCore, &plugin_settings.macro[3].data, NULL, NULL },
 #endif
-    { Setting_UserDefined_4, Group_AuxPorts, "Macro 1 port", NULL, Format_Decimal, "-#0", "-1", max_port, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } },
+    { Setting_UserDefined_4, Group_AuxPorts, "Macro 1 port", NULL, Format_Decimal, "-#0", "-1", d_in.port_maxs, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } },
 #if N_MACROS > 1
-    { Setting_UserDefined_5, Group_AuxPorts, "Macro 2 port", NULL, Format_Decimal, "-#0", "-1", max_port, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } },
+    { Setting_UserDefined_5, Group_AuxPorts, "Macro 2 port", NULL, Format_Decimal, "-#0", "-1", d_in.port_maxs, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } },
 #endif
 #if N_MACROS > 2
-    { Setting_UserDefined_6, Group_AuxPorts, "Macro 3 port", NULL, Format_Decimal, "-#0", "-1", max_port, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } },
+    { Setting_UserDefined_6, Group_AuxPorts, "Macro 3 port", NULL, Format_Decimal, "-#0", "-1", d_in.port_maxs, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } },
 #endif
 #if N_MACROS > 3
-    { Setting_UserDefined_7, Group_AuxPorts, "Macro 4 port", NULL, Format_Decimal, "-#0", "-1", max_port, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } },
+    { Setting_UserDefined_7, Group_AuxPorts, "Macro 4 port", NULL, Format_Decimal, "-#0", "-1", d_in.port_maxs, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } },
 #endif
 };
-
-#ifndef NO_SETTINGS_DESCRIPTIONS
 
 static const setting_descr_t macro_settings_descr[] = {
     { Setting_UserDefined_0, "Macro content for macro 1, separate blocks (lines) with the vertical bar character |." },
@@ -219,8 +213,6 @@ static const setting_descr_t macro_settings_descr[] = {
 #endif
 };
 
-#endif
-
 // Write settings to non volatile storage (NVS).
 static void macro_settings_save (void)
 {
@@ -230,13 +222,16 @@ static void macro_settings_save (void)
 // Restore default settings and write to non volatile storage (NVS).
 static void macro_settings_restore (void)
 {
-    uint_fast8_t idx = N_MACROS, port = n_ports > N_MACROS ? n_ports - N_MACROS : 0;
+    uint_fast8_t idx = min(N_MACROS, d_in.n_ports);
+
+    memset(&plugin_settings, 0xFF, sizeof(macro_settings_t));
 
     // Register empty macro strings and set default port numbers if mapping is available.
-    for(idx = 0; idx < N_MACROS; idx++) {
-         plugin_settings.macro[idx].port = port++;
+    do {
+        idx--;
         *plugin_settings.macro[idx].data = '\0';
-    };
+        plugin_settings.macro[idx].port = d_in.get_next(&d_in, idx == min(N_MACROS, d_in.n_ports) - 1 ? IOPORT_UNASSIGNED : plugin_settings.macro[idx + 1].port, label[idx], pin_caps);
+    } while(idx);
 
     hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&plugin_settings, sizeof(macro_settings_t), true);
 }
@@ -245,36 +240,32 @@ static void macro_settings_restore (void)
 // If load fails restore to default values.
 static void macro_settings_load (void)
 {
-    uint_fast8_t idx = N_MACROS, n_ok = 0, n_enabled = 0;
-    xbar_t *pin = NULL;
+    uint_fast8_t idx = min(N_MACROS, d_in.n_ports), n_ok = 0, n_enabled = 0;
+    xbar_t *pin;
 
     if(hal.nvs.memcpy_from_nvs((uint8_t *)&plugin_settings, nvs_address, sizeof(macro_settings_t), true) != NVS_TransferResult_OK)
         macro_settings_restore();
 
     do {
         idx--;
-        if((port[idx] = plugin_settings.macro[idx].port) == 0xFF)
+        if((port[idx] = plugin_settings.macro[idx].port) == IOPORT_UNASSIGNED)
             continue;
-        n_enabled++;
-        if((pin = ioport_get_info(Port_Digital, Port_Input, port[idx])) && !(pin->cap.irq_mode & IRQ_Mode_Falling)) // Is port interrupt capable?
-            port[idx] = 0xFF;                                                                                       // No, flag it as not claimed.
-        else if(ioport_claim(Port_Digital, Port_Input, &port[idx], "Macro pin")) {                                  // Try to claim the port.
-            if(pin->cap.debounce) {
+        if((pin = d_in.claim(&d_in, &port[idx], label[idx], pin_caps))) {   // Try to claim the port.
+            if(pin->cap.debounce) {                                         // Enable debounce if available.
                 gpio_in_config_t config = {
                     .debounce = On,
                     .pull_mode = PullMode_Up
                 };
                 pin->config(pin, &config, false);
             }
-        } else
-            port[idx] = 0xFF;
+        }
     } while(idx);
 
     // Then try to register the interrupt handler.
     idx = N_MACROS;
     do {
         idx--;
-        if(port[idx] != 0xFF && hal.port.register_interrupt_handler(port[idx], IRQ_Mode_Falling, execute_macro))
+        if(port[idx] != IOPORT_UNASSIGNED && ioport_enable_irq(port[idx], IRQ_Mode_Falling, execute_macro))
             n_ok++;
     } while(idx);
 
@@ -288,7 +279,7 @@ static void report_options (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("Macro plugin (PD)", "0.04);
+        report_plugin("Macro plugin (PD)", "0.05");
 }
 
 // A call my_plugin_init will be issued automatically at startup.
@@ -301,22 +292,15 @@ void my_plugin_init (void)
         .n_groups = sizeof(macro_groups) / sizeof(setting_group_detail_t),
         .settings = macro_settings,
         .n_settings = sizeof(macro_settings) / sizeof(setting_detail_t),
-    #ifndef NO_SETTINGS_DESCRIPTIONS
         .descriptions = macro_settings_descr,
         .n_descriptions = sizeof(macro_settings_descr) / sizeof(setting_descr_t),
-    #endif
         .save = macro_settings_save,
         .load = macro_settings_load,
         .restore = macro_settings_restore
     };
 
     // If resources available register our plugin with the core.
-    if(ioport_can_claim_explicit() &&
-       (n_ports = ioports_available(Port_Digital, Port_Input)) &&
-        (nvs_address = nvs_alloc(sizeof(macro_settings_t)))) {
-
-        // Used for setting value validation.
-        strcpy(max_port, uitoa(n_ports - 1));
+    if(ioports_cfg(&d_in, Port_Digital, Port_Input)->n_ports && (nvs_address = nvs_alloc(sizeof(macro_settings_t)))) {
 
         // Register settings.
         settings_register(&setting_details);

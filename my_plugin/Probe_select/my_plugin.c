@@ -67,16 +67,15 @@ static on_report_options_ptr on_report_options;
 
 #define RELAY_PLUGIN_SETTING Setting_UserDefined_0
 
-static uint8_t n_ports;
-static char max_port[4];
-
 typedef struct {
     uint8_t port;
 } relay_settings_t;
 
+static io_port_cfg_t d_out;
 static nvs_address_t nvs_address;
-static on_report_options_ptr on_report_options;
 static relay_settings_t relay_settings;
+
+static on_report_options_ptr on_report_options;
 
 static user_mcode_type_t mcode_check (user_mcode_t mcode)
 {
@@ -197,30 +196,21 @@ static void probe_reset (void)
 
 static status_code_t set_port (setting_id_t setting, float value)
 {
-    if(!isintf(value))
-        return Status_BadNumberFormat;
-
-    relay_settings.port = value < 0.0f ? 0xFF : (uint8_t)value;
-
-    return Status_OK;
+    return d_out.set_value(&d_out, &relay_settings.port, (pin_cap_t){}, value);
 }
 
 static float get_port (setting_id_t setting)
 {
-    return relay_settings.port >= n_ports ? -1.0f : (float) relay_settings.port;
+    return d_out.get_value(&d_out, relay_settings.port);
 }
 
 static const setting_detail_t user_settings[] = {
-    { RELAY_PLUGIN_SETTING, Group_AuxPorts, "Relay aux port", NULL, Format_Decimal, "-#0", "-1", max_port, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } }
+    { RELAY_PLUGIN_SETTING, Group_AuxPorts, "Relay aux port", NULL, Format_Decimal, "-#0", "-1", d_out.port_maxs, Setting_NonCoreFn, set_port, get_port, NULL, { .reboot_required = On } }
 };
-
-#ifndef NO_SETTINGS_DESCRIPTIONS
 
 static const setting_descr_t relay_settings_descr[] = {
     { RELAY_PLUGIN_SETTING, "Aux port number to use for probe relay control. Set to -1 to disable." }
 };
-
-#endif
 
 // Write settings to non volatile storage (NVS).
 static void plugin_settings_save (void)
@@ -233,7 +223,7 @@ static void plugin_settings_save (void)
 static void plugin_settings_restore (void)
 {
     // Find highest numbered port that supports change interrupt, or keep the current one if found.
-    relay_settings.port = ioport_find_free(Port_Digital, Port_Output, (pin_cap_t){ .claimable = On }, "Probe relay");
+    relay_settings.port = d_out.get_next(&d_out, IOPORT_UNASSIGNED, "Probe relay", (pin_cap_t){});
 
     hal.nvs.memcpy_to_nvs(nvs_address, (uint8_t *)&relay_settings, sizeof(relay_settings_t), true);
 }
@@ -246,12 +236,12 @@ static void plugin_settings_load (void)
         plugin_settings_restore();
 
     // Sanity check
-    if(relay_settings.port >= n_ports)
-        relay_settings.port = 0xFF;
+    if(relay_settings.port >= d_out.n_ports)
+        relay_settings.port = IOPORT_UNASSIGNED;
 
-    if((relay_port = relay_settings.port) != 0xFF) {
+    if((relay_port = relay_settings.port) != IOPORT_UNASSIGNED) {
 
-        if(ioport_claim(Port_Digital, Port_Output, &relay_port, "Probe relay")) {
+        if(d_out.claim(&d_out, &relay_port, "Probe relay", (pin_cap_t){})) {
 
             memcpy(&user_mcode, &grbl.user_mcode, sizeof(user_mcode_ptrs_t));
 
@@ -275,7 +265,7 @@ static void onReportOptions (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("Probe select", "0.08");
+        report_plugin("Probe select", "0.10");
 }
 
 void my_plugin_init (void)
@@ -284,20 +274,14 @@ void my_plugin_init (void)
     static setting_details_t setting_details = {
         .settings = user_settings,
         .n_settings = sizeof(user_settings) / sizeof(setting_detail_t),
-    #ifndef NO_SETTINGS_DESCRIPTIONS
         .descriptions = relay_settings_descr,
         .n_descriptions = sizeof(relay_settings_descr) / sizeof(setting_descr_t),
-    #endif
         .save = plugin_settings_save,
         .load = plugin_settings_load,
         .restore = plugin_settings_restore
     };
 
-    if(ioport_can_claim_explicit() &&
-       (n_ports = ioports_available(Port_Digital, Port_Output)) &&
-        (nvs_address = nvs_alloc(sizeof(relay_settings_t)))) {
-
-        strcpy(max_port, uitoa(n_ports - 1));
+    if(ioports_cfg(&d_out, Port_Digital, Port_Output)->n_ports && (nvs_address = nvs_alloc(sizeof(relay_settings_t)))) {
 
         on_report_options = grbl.on_report_options;
         grbl.on_report_options = onReportOptions;
