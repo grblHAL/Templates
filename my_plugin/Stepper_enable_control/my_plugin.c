@@ -41,7 +41,8 @@ static void stepperEnable (axes_signals_t enable, bool hold)
         task_delete(disable_steppers, NULL);
     }
 
-    stepper_enabled.mask = enable.mask;
+    if((stepper_enabled.mask = enable.mask))
+        sys.steppers_deenergize = false;
 
     stepper_enable(enable, hold);
 }
@@ -49,7 +50,7 @@ static void stepperEnable (axes_signals_t enable, bool hold)
 static void disable_steppers (void *data)
 {
     await_disable = false;
-    stepperEnable(stepper_enabled, false);
+    hal.stepper.enable(*((axes_signals_t *)data), false);
 }
 
 static user_mcode_type_t mcode_check (user_mcode_t mcode)
@@ -66,6 +67,7 @@ static status_code_t mcode_validate (parser_block_t *gc_block)
     switch((uint16_t)gc_block->user_mcode) {
 
         case 17:
+            gc_block->user_mcode_sync = On;
             gc_block->words.x = gc_block->words.y = gc_block->words.z = Off;
 #ifdef A_AXIS
             gc_block->words.a = Off;
@@ -80,6 +82,7 @@ static status_code_t mcode_validate (parser_block_t *gc_block)
 
         case 18:
         case 84:
+            gc_block->user_mcode_sync = On;
             if(gc_block->words.s && isnanf(gc_block->values.s))
                 state = Status_BadNumberFormat;
             gc_block->words.s = gc_block->words.x = gc_block->words.y = gc_block->words.z = Off;
@@ -121,67 +124,77 @@ static void mcode_execute (uint_fast16_t state, parser_block_t *gc_block)
 #endif
     };
 
-    if (state != STATE_CHECK_MODE)
+    if(state != STATE_CHECK_MODE)
       switch((uint16_t)gc_block->user_mcode) {
 
         case 17: // stepper enable
             {
+                bool changed;
+                axes_signals_t enable = { .bits = stepper_enabled.bits };
+
                 if(gc_block->words.mask & axis_words.mask) {
                     if(gc_block->words.x)
-                        stepper_enabled.x = On;
+                        enable.x = On;
                     if(gc_block->words.y)
-                        stepper_enabled.y = On;
+                        enable.y = On;
                     if(gc_block->words.z)
-                        stepper_enabled.z = On;
+                        enable.z = On;
 #ifdef A_AXIS
                     if(gc_block->words.a)
-                        stepper_enabled.a = On;
+                        enable.a = On;
 #endif
 #ifdef B_AXIS
                     if(gc_block->words.b)
-                        stepper_enabled.b = On;
+                        enable.b = On;
 #endif
 #ifdef C_AXIS
                     if(gc_block->words.c)
-                        stepper_enabled.c = On;
+                        enable.c = On;
 #endif
                 } else
-                    stepper_enabled.mask = AXES_BITMASK;
+                    enable.bits = AXES_BITMASK;
 
-                stepperEnable(stepper_enabled, false);
+                changed = !sys.steppers_enabled || enable.bits != stepper_enabled.bits;
+                hal.stepper.enable(enable, false);
+                if(changed && enable.bits == AXES_BITMASK && settings.stepper_enable_delay)
+                    hal.delay_ms(settings.stepper_enable_delay, NULL);
             }
             break;
 
         case 18: // stepper disable
         case 84:
             {
+                static axes_signals_t enable;
+
+                enable.bits = stepper_enabled.bits;
+
                 if(gc_block->words.mask & axis_words.mask) {
                     if(gc_block->words.x)
-                        stepper_enabled.x = Off;
+                        enable.x = Off;
                     if(gc_block->words.y)
-                        stepper_enabled.y = Off;
+                        enable.y = Off;
                     if(gc_block->words.z)
-                        stepper_enabled.z = Off;
+                        enable.z = Off;
 #ifdef A_AXIS
                     if(gc_block->words.a)
-                        stepper_enabled.a = Off;
+                        enable.a = Off;
 #endif
 #ifdef B_AXIS
                     if(gc_block->words.b)
-                        stepper_enabled.b = Off;
+                        enable.b = Off;
 #endif
 #ifdef C_AXIS
                     if(gc_block->words.c)
-                        stepper_enabled.c = Off;
+                        enable.c = Off;
 #endif
                 } else
-                    stepper_enabled.mask = 0;
+                    enable.mask = 0;
 
                 if(gc_block->words.s && gc_block->values.s > 0.0f) {
                     if(!await_disable)
-                        await_disable = task_add_delayed(disable_steppers, NULL, (uint32_t)gc_block->values.s * 1000);
+                        await_disable = task_add_delayed(disable_steppers, &enable, (uint32_t)(gc_block->values.s * 1000.0f));
                 } else
-                    stepperEnable(stepper_enabled, false);
+                    hal.stepper.enable(enable, false);
             }
             break;
 
@@ -199,7 +212,7 @@ static void reportOptions (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("Stepper enable", "0.03");
+        report_plugin("Stepper enable", "0.04");
 }
 
 void my_plugin_init (void)
