@@ -10,11 +10,12 @@
 */
 
 #include "driver.h"
-#include "grbl/task.h"
+
+#if SDCARD_ENABLE
 
 #include <stdio.h>
 
-#if 1
+#include "grbl/task.h"
 
 static on_user_command_ptr on_user_command;
 static on_report_options_ptr on_report_options;
@@ -113,8 +114,7 @@ static status_code_t set_report_interval (sys_state_t state, char *args)
     return Status_OK;
 }
 
-
-// Returns output as html response
+// Returns output in file for html response
 static status_code_t onUserCommand (char *cmd)
 {
     typedef struct {
@@ -137,7 +137,7 @@ static status_code_t onUserCommand (char *cmd)
 
     vfs_file_t *file;
 
-    if(!strncmp(cmd, "$/", 2) && (file = vfs_open("/stream/qry.txt", "w")) != NULL) {
+    if(!strncmp(cmd, "$/", 2) && (file = vfs_open("/ram/qry.txt", "w")) != NULL) {
 
         char *value = NULL;
         uint_fast32_t idx = sizeof(fnc_setting) / sizeof(fluidnc_setting_t);
@@ -180,7 +180,7 @@ static void onReportOptions (bool newopt)
     on_report_options(newopt);
 
     if(!newopt)
-        report_plugin("FluidNC $-commands for ESP3D", "0.01");
+        report_plugin("FluidNC $-commands for ESP3D", "0.02");
 }
 
 void my_plugin_init (void)
@@ -205,4 +205,4 @@ void my_plugin_init (void)
     grbl.on_report_options = onReportOptions;
 }
 
-#endif
+#endif // SDCARD_ENABLE
