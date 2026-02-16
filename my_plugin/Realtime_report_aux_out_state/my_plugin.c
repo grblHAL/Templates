@@ -112,7 +112,7 @@ static void onReportOptions (bool newopt)
         report_plugin("Aux port state", "0.01");
 }
 
-static void setup (void *data)
+static void setup_ports (void *data)
 {
     uint8_t n_ports;
 
@@ -136,5 +136,5 @@ void my_plugin_init (void)
     on_port_out = grbl.on_port_out;
     grbl.on_port_out = onPortOut;
 
-    task_run_on_startup(setup, NULL);
+    task_run_on_startup(setup_ports, NULL);
 }
