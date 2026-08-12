@@ -141,7 +141,7 @@ static status_code_t modbus_debug (sys_state_t state, char *args)
 {
     modbus_rtu_stream_t *s;
 
-    if(*args == '0' && *(args + 1) == '\0') {
+    if(args && *args == '0' && *(args + 1) == '\0') {
         s = modbus_get_rtu_stream();
         if(s && s->read == modbus_read) {
             s->read = stream.read;
@@ -149,7 +149,7 @@ static status_code_t modbus_debug (sys_state_t state, char *args)
             s->set_direction = stream.set_direction;
             stream.read = NULL;
         }
-    } else if(*args == '\0' && stream.read == NULL && (s = modbus_get_rtu_stream())) {
+    } else if(args == NULL && stream.read == NULL && (s = modbus_get_rtu_stream())) {
 
         memcpy(&stream, s, sizeof(stream));
 
@@ -219,7 +219,7 @@ static void onReportOptions (bool newopt)
     if(!newopt)
         report_plugin(modbus_isup().ok
                        ? "Modbus command"
-                       : "Modbus command (offline)", "0.01");
+                       : "Modbus command (offline)", "0.02");
 }
 
 void my_plugin_init (void)
@@ -233,6 +233,8 @@ void my_plugin_init (void)
         .n_commands = sizeof(command_list) / sizeof(sys_command_t),
         .commands = command_list
     };
+
+    stream.read = NULL;
 
     on_report_options = grbl.on_report_options;
     grbl.on_report_options = onReportOptions;
