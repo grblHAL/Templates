@@ -62,7 +62,7 @@ void text_direction (float cost, float sint)
     printf_P(PSTR("Label rotation: sin=%f cos=%f\n"), sintheta, costheta);
 }
 
-static void rotate (float* x, float* y)
+static void hpgl_rotate (float* x, float* y)
 {
     float xc = *x - charorigin.x;
     float yc = *y - charorigin.y;
@@ -86,7 +86,7 @@ bool text_pos (float x, float y, hpgl_point_t *target)
     if(isnanf(x)) {
         d.x = labelorigin.x;
         d.y = labelorigin.y - fontscale.y * 10.0f;
-        rotate(&d.x, &d.y);
+        hpgl_rotate(&d.x, &d.y);
         userscale(d, target, &hpgl_state.user_loc);
         labelorigin = hpgl_state.user_loc;
     } else {
@@ -96,7 +96,7 @@ bool text_pos (float x, float y, hpgl_point_t *target)
             d.x += fontscale.x * 5.0f * x;
         if(y != 0.0f)
             d.y += fontscale.y * 10.0f * y;
-        rotate(&d.x, &d.y);
+        hpgl_rotate(&d.x, &d.y);
         userscale(d, target, &hpgl_state.user_loc);
     }
 
@@ -121,7 +121,7 @@ bool text_char (uint8_t c, hpgl_point_t *target, pen_status_t *pen)
                 printf_P(PSTR("CR"));
                 d.x = labelorigin.x;
                 d.y = labelorigin.y;
-                //rotate(&xd, &yd);
+                //hpgl_rotate(&xd, &yd);
                 userscale(d, target, &hpgl_state.user_loc);
                 coffs = hpgl_state.charset[0];
                 charorigin = hpgl_state.user_loc;
@@ -131,7 +131,7 @@ bool text_char (uint8_t c, hpgl_point_t *target, pen_status_t *pen)
                 printf_P(PSTR("LF"));
                 d.x = hpgl_state.user_loc.x;
                 d.y = hpgl_state.user_loc.y - fontscale.y * 10.0f;
-                rotate(&d.x, &d.y);
+                hpgl_rotate(&d.x, &d.y);
                 userscale(d, target, &hpgl_state.user_loc);
                 coffs = hpgl_state.charset[0];
                 charorigin = hpgl_state.user_loc;
@@ -168,7 +168,7 @@ bool text_char (uint8_t c, hpgl_point_t *target, pen_status_t *pen)
 #endif
  
         if (!noadvance) {
-            rotate(&d.x, &d.y);
+            hpgl_rotate(&d.x, &d.y);
             userscale(d, target, &hpgl_state.user_loc);
         }
 

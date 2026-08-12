@@ -66,6 +66,7 @@ $MODBUSDBG=0 - disable debug output.
 #include "grbl/hal.h"
 #include "grbl/modbus.h"
 #include "grbl/task.h"
+#include "grbl/platform.h"
 
 static modbus_rtu_stream_t stream;
 
@@ -188,7 +189,7 @@ static status_code_t modbus_command (sys_state_t state, char *args)
 
     if(!modbus_isup().ok)
         status = Status_BadNumberFormat;
-    else if((argc = sscanf(args, "%li,%li,%li,%li,%li", &device, &function, &address, &ivalues[0], &ivalues[1])) >= 2) {
+    else if((argc = sscanf(args, INT32FMT "," INT32FMT "," INT32FMT "," INT32FMT "," INT32FMT, &device, &function, &address, &ivalues[0], &ivalues[1])) >= 2) {
 
         const modbus_function_properties_t *fn = modbus_get_function_properties((modbus_function_t)function);
 

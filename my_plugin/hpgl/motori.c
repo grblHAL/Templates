@@ -57,7 +57,7 @@
 #include "grbl/state_machine.h"
 #include "grbl/task.h"
 
-#define VERSION "0.11"
+#define VERSION "0.12"
 #define DC_VALUES_MAX 12
 
 typedef enum {
@@ -111,9 +111,9 @@ static struct {
 #define SEEK0_DONE  0x80
 
 static void go_home (void);
-static ISR_CODE bool ISR_FUNC(stream_insert_buffer)(char c);
-static ISR_CODE bool ISR_FUNC(stream_insert_buffer_xoff)(char c);
-static ISR_CODE bool ISR_FUNC(stream_insert_buffer_enq)(char c);
+static ISR_CODE bool ISR_FUNC(stream_insert_buffer)(uint8_t c);
+static ISR_CODE bool ISR_FUNC(stream_insert_buffer_xoff)(uint8_t c);
+static ISR_CODE bool ISR_FUNC(stream_insert_buffer_enq)(uint8_t c);
 
 bool moveto (hpgl_coord_t x, hpgl_coord_t y);
 
@@ -682,7 +682,7 @@ static ISR_CODE void ISR_FUNC(process_dci)(void)
     }
 }
 
-static ISR_CODE bool ISR_FUNC(await_colon)(char c)
+static ISR_CODE bool ISR_FUNC(await_colon)(uint8_t c)
 {
     if(c == ':' || (c == ASCII_ESC && dc_values.j >= DC_VALUES_MAX)) {
         hal.stream.set_enqueue_rt_handler(base_handler);
@@ -707,7 +707,7 @@ static ISR_CODE bool ISR_FUNC(await_colon)(char c)
     return true;
 }
 
-static ISR_CODE bool ISR_FUNC(stream_parse_esc)(char c)
+static ISR_CODE bool ISR_FUNC(stream_parse_esc)(uint8_t c)
 {
     static bool ok = false;
 
@@ -806,7 +806,7 @@ static ISR_CODE bool ISR_FUNC(stream_parse_esc)(char c)
 
 // Normal mode data transfer
 
-int16_t stream_get_data (void)
+int32_t stream_get_data (void)
 {
     if(pollc == 0 && stream.get_rx_buffer_count()) {
         pollc = stream.read();
@@ -816,7 +816,7 @@ int16_t stream_get_data (void)
     return SERIAL_NO_DATA;
 }
 
-static ISR_CODE bool ISR_FUNC(stream_insert_buffer)(char c)
+static ISR_CODE bool ISR_FUNC(stream_insert_buffer)(uint8_t c)
 {
     bool claim = false;
 
@@ -843,7 +843,7 @@ static ISR_CODE bool ISR_FUNC(stream_insert_buffer)(char c)
 
 // Xon/Xoff mode data transfer
 
-int16_t stream_get_data_xon (void)
+int32_t stream_get_data_xon (void)
 {
     static volatile bool lock = false;
 
@@ -873,7 +873,7 @@ int16_t stream_get_data_xon (void)
     return SERIAL_NO_DATA;
 }
 
-static ISR_CODE bool ISR_FUNC(stream_insert_buffer_xoff)(char c)
+static ISR_CODE bool ISR_FUNC(stream_insert_buffer_xoff)(uint8_t c)
 {
     bool claim = false;
 
@@ -908,7 +908,7 @@ static ISR_CODE bool ISR_FUNC(stream_insert_buffer_xoff)(char c)
 
 // ENQ/ACK mode data transfer
 
-int16_t stream_get_data_ack (void)
+int32_t stream_get_data_ack (void)
 {
     static volatile bool lock = false;
 
@@ -949,7 +949,7 @@ static ISR_CODE void ISR_FUNC(stream_send_ack)(void)
         hal.stream.read = stream_get_data_ack;
 }
 
-static ISR_CODE bool ISR_FUNC(stream_await_echo_terminator)(char c)
+static ISR_CODE bool ISR_FUNC(stream_await_echo_terminator)(uint8_t c)
 {
     if(c == dc_data.echo_terminator)
         hal.stream.set_enqueue_rt_handler(base_handler);
@@ -967,7 +967,7 @@ static ISR_CODE void ISR_FUNC(stream_send_initiator)(void)
     stream_send_ack();
 }
 
-static ISR_CODE bool ISR_FUNC(stream_await_trigger)(char c)
+static ISR_CODE bool ISR_FUNC(stream_await_trigger)(uint8_t c)
 {
     if(c == dc_data.output_trigger)
         hal.delay_ms(dc_data.turnaround_delay + dc_data.intercharacter_delay, stream_send_initiator);
@@ -975,7 +975,7 @@ static ISR_CODE bool ISR_FUNC(stream_await_trigger)(char c)
     return true;
 }
 
-static ISR_CODE bool ISR_FUNC(stream_insert_buffer_enq)(char c)
+static ISR_CODE bool ISR_FUNC(stream_insert_buffer_enq)(uint8_t c)
 {
     bool claim = false;
 
