@@ -57,7 +57,7 @@
 #include "grbl/state_machine.h"
 #include "grbl/task.h"
 
-#define VERSION "0.12"
+#define VERSION "0.13"
 #define DC_VALUES_MAX 12
 
 typedef enum {
@@ -536,7 +536,7 @@ static void go_home (void)
     hal.stream.write = hal.stream.write_all = stream_write_null;
 
     pen_control(Pen_Up);
-    system_execute_line(cmd);
+    system_execute_line(cmd, hal.stream.write);
 
     plan_data_init(&plan_data);
     plan_data.condition.rapid_motion = On;
