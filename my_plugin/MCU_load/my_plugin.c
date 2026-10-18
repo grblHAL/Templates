@@ -1,5 +1,5 @@
 /*
-  my_plugin.c.c - MCU load estimator
+  my_plugin.c - MCU load estimator
 
   Counts number of iterations of protocol idle loop per 10ms and add count to real time report.
 
