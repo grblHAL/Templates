@@ -1,7 +1,7 @@
 /*
   my_plugin.c - embedded files example
 
-  Adds two P65 macros to the "/embedded" VFS mount (directory).
+  Adds two G65 macros to the "/embedded" VFS mount (directory).
 
   Run with G65P400 or G65P401
 
